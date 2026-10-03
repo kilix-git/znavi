@@ -1,0 +1,8 @@
+.zig-cache/
+zig-out/
+src/zigoutling
+
+# Staré zálohy – ostávajú na disku, ale nesledujeme ich
+backup-shell/
+src.old/
+drawscreeen.zig
