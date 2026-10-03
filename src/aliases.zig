@@ -1,27 +1,28 @@
-// cd aliasy zo ~/.aliases: načítanie, parsovanie a filtrovanie podľa mena
-// toto cele napisal claude
+// aliases parsed from ~/.aliases
+// written entirely by claude
 const std = @import("std");
 
-// Alias zo ~/.aliases, ktorý iba mení adresár: alias rev="cd ~/cloud-local/revizie/"
+// An alias from ~/.aliases that only changes directory: alias dl="cd ~/Downloads"
 pub const Alias = struct {
     name: []const u8,
     path: []const u8,
-    // Skutočná cesta (/home/... -> /usr/home/..., bez lomky na konci) na porovnanie s adresármi v zozname
+    // Real path (/home/... -> /usr/home/..., no trailing '/'), used to match
+    // aliases against directories in the listing
     real_path: []const u8,
 };
 
-// Načíta ~/.aliases a doplní skutočné cesty (realpath). Všetko ide do arény procesu –
-// aliasy žijú do konca programu, netreba ich uvoľňovať.
+// Loads ~/.aliases and resolves real paths (realpath). Everything goes into the arena
+// aliases have the same lifetime as the entire program, there's no need to free them
 pub fn loadAliases(io: std.Io, arena: std.mem.Allocator, home: []const u8) ![]const Alias {
     const file_path = try std.fs.path.join(arena, &.{ home, ".aliases" });
     const contents = std.Io.Dir.cwd().readFileAlloc(io, file_path, arena, .limited(1024 * 1024)) catch |err| switch (err) {
-        error.FileNotFound => return &.{}, // bez ~/.aliases jednoducho nemáme aliasy
+        error.FileNotFound => return &.{}, // no file = no aliases
         else => return err,
     };
 
     const aliases = try parseAliases(arena, contents, home);
     for (aliases) |*alias| {
-        // Ak adresár (zatiaľ) neexistuje, realpath zlyhá – ostane textová cesta z parseAliases
+        // If the directory does not (yet) exist, realpath fails – the text-only path from parseAliases remains
         var real_buf: [std.fs.max_path_bytes]u8 = undefined;
         if (std.Io.Dir.realPathFileAbsolute(io, alias.path, &real_buf)) |len| {
             alias.real_path = try arena.dupe(u8, real_buf[0..len]);
@@ -30,30 +31,30 @@ pub fn loadAliases(io: std.Io, arena: std.mem.Allocator, home: []const u8) ![]co
     return aliases;
 }
 
-// Z textu ~/.aliases vyberie iba aliasy tvaru alias meno="cd cesta" (alebo 'cd cesta'), ostatné preskočí.
-// Bez prístupu na disk: real_path je zatiaľ iba upravená textová cesta (bez lomky na konci)
+// Takes only lines of the form alias name="cd path" (or 'cd path'), the rest is skipped.
+// real_path here is just the cleaned-up text path; loadAliases replaces it with the real one if the directory exists
 pub fn parseAliases(arena: std.mem.Allocator, contents: []const u8, home: []const u8) ![]Alias {
     var list: std.ArrayList(Alias) = .empty;
     var lines = std.mem.splitScalar(u8, contents, '\n');
     while (lines.next()) |raw_line| {
         const line = std.mem.trim(u8, raw_line, " \t\r");
-        // Komentáre (#alias ...) a ostatné riadky preskočíme
+        // Comments (#alias ...) and the other lines are skipped
         if (!std.mem.startsWith(u8, line, "alias ")) continue;
         const eq = std.mem.indexOfScalar(u8, line, '=') orelse continue;
         const name = std.mem.trim(u8, line["alias ".len..eq], " \t");
-        // Hodnotu zbavíme úvodzoviek: "cd ..." alebo 'cd ...'
+        // we trim the quotes " " or ' '
         const value = std.mem.trim(u8, line[eq + 1 ..], "\"' \t");
         if (!std.mem.startsWith(u8, value, "cd ")) continue;
         const target = std.mem.trim(u8, value["cd ".len..], " \t");
-        // "cd x && ls" a podobné nie sú čistá zmena adresára
+        // "cd x && ls" is not a pure directory change, so it is ignored
         if (name.len == 0 or target.len == 0 or std.mem.indexOfAny(u8, target, " ;&|") != null) continue;
 
-        // ~ alebo ~/... nahradíme domovským adresárom
+        // ~ or ~/... is replaced by home directory
         const path = if (std.mem.eql(u8, target, "~") or std.mem.startsWith(u8, target, "~/"))
             try std.mem.concat(arena, u8, &.{ home, target[1..] })
         else
             target;
-        // Relatívne "cd foo" závisí od toho, kde práve sme – na skok sa nehodí
+        // the relative "cd foo" (not absolute) depends on our current directory and therefore is not suitable for use in our program
         if (!std.fs.path.isAbsolute(path)) continue;
 
         try list.append(arena, .{ .name = name, .path = path, .real_path = try std.fs.path.resolve(arena, &.{path}) });
@@ -61,12 +62,12 @@ pub fn parseAliases(arena: std.mem.Allocator, contents: []const u8, home: []cons
     return list.toOwnedSlice(arena);
 }
 
-// Alias zodpovedá filtru, ak jeho meno obsahuje text filtra (bez ohľadu na veľkosť písmen)
+// Alias matches the filter if its name contains the text of the filter (case insensitive)
 fn aliasMatchesFilter(alias: Alias, filter: []const u8) bool {
     return std.ascii.indexOfIgnoreCase(alias.name, filter) != null;
 }
 
-// Aliasy zodpovedajúce filtru
+// Aliases which match the filter
 pub fn getFilteredAliases(allocator: std.mem.Allocator, aliases: []const Alias, filter: []const u8) ![]const Alias {
     var result: std.ArrayList(Alias) = .empty;
     errdefer result.deinit(allocator);
@@ -78,7 +79,7 @@ pub fn getFilteredAliases(allocator: std.mem.Allocator, aliases: []const Alias, 
     return result.toOwnedSlice(allocator);
 }
 
-// Jediný alias zodpovedajúci filtru, inak null (žiadny alebo viac) – bez alokácie
+// the only alias which matches the filter, otherwise null – no allocation
 pub fn singleAliasMatch(aliases: []const Alias, filter: []const u8) ?Alias {
     var found: ?Alias = null;
     for (aliases) |alias| {
@@ -89,14 +90,14 @@ pub fn singleAliasMatch(aliases: []const Alias, filter: []const u8) ?Alias {
     return found;
 }
 
-// ===================== Testy =====================
+// ===================== Test =====================
 
-test "parseAliases berie iba čisté cd aliasy" {
+test "parseAliases takes only clean `cd somewhere` types of aliases" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const text =
         \\alias dl="cd ~/Downloads"
-        \\alias proj='cd /usr/home/matej/projects'
+        \\alias proj='cd /usr/home/foouser/projects'
         \\#alias old="cd /old"
         \\alias ll="ls -la"
         \\alias both="cd /tmp && ls"
@@ -111,8 +112,8 @@ test "parseAliases berie iba čisté cd aliasy" {
     try std.testing.expectEqualStrings("dl", aliases[0].name);
     try std.testing.expectEqualStrings("/home/test/Downloads", aliases[0].path);
     try std.testing.expectEqualStrings("proj", aliases[1].name);
-    try std.testing.expectEqualStrings("/usr/home/matej/projects", aliases[1].path);
+    try std.testing.expectEqualStrings("/usr/home/foouser/projects", aliases[1].path);
     try std.testing.expectEqualStrings("log", aliases[2].name);
-    // real_path bez lomky na konci
+    // real_path without '/' at the end
     try std.testing.expectEqualStrings("/var/log", aliases[2].real_path);
 }
