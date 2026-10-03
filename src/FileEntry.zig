@@ -8,10 +8,10 @@ is_hidden: bool = false,
 is_symlink: bool = false,
 size: usize = 0,
 date: std.Io.Timestamp = .zero,
-// uid / gid; null ak sa nepodarilo zistiť (zobrazí sa "?")
+// uid / gid; null initialize to null if we are unable to get the real values (will be shown as "?")
 owner: ?u32 = null,
 group: ?u32 = null,
-// Mená vlastníka a skupiny (matej, wheel) – doplní main po načítaní adresára
+// owner and group will be filled by main() after reading the directory
 owner_name: []const u8 = "?",
 group_name: []const u8 = "?",
 permissions: std.Io.File.Permissions,
@@ -23,37 +23,37 @@ pub fn lessThanByName(context: void, a: Self, b: Self) bool {
 
 pub fn lessThanByNameDirsFirst(context: void, a: Self, b: Self) bool {
     _ = context;
-    // Ak je jedno priečinok a druhé súbor, priečinok má prednosť
+    // if a is dir and b is a file, a is first
     if (a.is_dir != b.is_dir) {
         return a.is_dir;
     }
-    // Ak sú rovnakého typu, zoradíme ich abecedne
+    // if they are both of the same type, sort by name
     return std.mem.lessThan(u8, a.name, b.name);
 }
 
 pub fn lessThanByDate(context: void, a: Self, b: Self) bool {
     _ = context;
-    // Prevedieme oba časy na nanosekundy
+    // turn the dates of both items to nanoseconds
     const a_ns = a.date.toNanoseconds();
     const b_ns = b.date.toNanoseconds();
 
-    // Ak chceme najnovšie navrchu, 'a' musí byť väčšie (novšie) ako 'b'
+    // if we want the newest item on top, the nanosecond count of 'a' must be bigger (newer) than 'b'
     if (a_ns != b_ns) {
         return a_ns > b_ns;
     }
 
-    // 3. Ak majú rovnaký čas, pre istotu ich zoradíme abecedne
+    // if their nanosecond time is exactly the same, sort by name
     return std.mem.lessThan(u8, a.name, b.name);
 }
 
 pub fn lessThanByDateDirsFirst(context: void, a: Self, b: Self) bool {
     _ = context;
 
-    // priečinky majú prednosť pred súbormi
+    // directories go first, the same principle as above
     if (a.is_dir != b.is_dir) {
         return a.is_dir;
     }
-    //ten istý kód
+    //again, the same principle
     const a_ns = a.date.toNanoseconds();
     const b_ns = b.date.toNanoseconds();
 
@@ -63,8 +63,8 @@ pub fn lessThanByDateDirsFirst(context: void, a: Self, b: Self) bool {
     return std.mem.lessThan(u8, a.name, b.name);
 }
 
-// Triedenie podľa veľkosti: priečinky (veľkosť sa nezobrazuje, "-") idú prvé podľa mena,
-// potom súbory od najmenšieho; rovnako veľké súbory podľa mena
+// sorting by size: directories (size is shown as "-") go first by name,
+// then files starting from the smallest file, files of the same size will be sorted by name
 pub fn lessThanBySizeAsc(context: void, a: Self, b: Self) bool {
     _ = context;
     if (a.is_dir != b.is_dir) return a.is_dir;
@@ -72,7 +72,7 @@ pub fn lessThanBySizeAsc(context: void, a: Self, b: Self) bool {
     return a.size < b.size;
 }
 
-// To isté, ale súbory od najväčšieho
+// the same, but from the biggest one
 pub fn lessThanBySizeDesc(context: void, a: Self, b: Self) bool {
     _ = context;
     if (a.is_dir != b.is_dir) return a.is_dir;
@@ -81,22 +81,22 @@ pub fn lessThanBySizeDesc(context: void, a: Self, b: Self) bool {
 }
 
 pub fn getFormattedDateTime(self: Self, buf: []u8) []const u8 {
-    // 1. Prevedieme nanosekundy na sekundy
+    // turn nanoseconds to seconds
     const total_seconds = @divTrunc(self.date.toNanoseconds(), std.time.ns_per_s);
 
-    // 2. Inicializujeme EpochSeconds štruktúru
+    // initialize EpochSeconds struct
     const epoch_secs = std.time.epoch.EpochSeconds{ .secs = @intCast(total_seconds) };
 
-    // 3. Vypočítame kalendárny deň, rok a mesiac
+    // calculate calendar day, month, year
     const epoch_day = epoch_secs.getEpochDay();
     const year_day = epoch_day.calculateYearDay();
     const month_day = year_day.calculateMonthDay();
 
-    // 4. Vypočítame čas v danom dni
+    // calculate time in the relevant day
     const day_seconds = epoch_secs.getDaySeconds();
 
-    // 5. Zápis do buffera vo formáte RRRR-MM-DD HH:MM:SS
-    // Poznámka: day_index začína od 0, preto pridávame + 1
+    // write into buffer in the format of YYYY-MM-DD HH:MM:SS
+    // note: day_index starts from 0, therefore we add + 1
     return std.fmt.bufPrint(buf, "{d:0>4}-{d:0>2}-{d:0>2} {d:0>2}:{d:0>2}:{d:0>2}", .{
         year_day.year,
         month_day.month.numeric(),
@@ -108,11 +108,12 @@ pub fn getFormattedDateTime(self: Self, buf: []u8) []const u8 {
 }
 
 pub fn getFormattedSize(self: Self, buf: []u8) []const u8 {
-    // Priečinky zvyčajne nemajú zmysluplnú veľkosť v bajtoch, tak vrátime pomlčku
+    // directories usually don't have a meaningful size in bytes, so we return "-"
     if (self.is_dir) return "-";
 
     const bytes = @as(f64, @floatFromInt(self.size));
 
+    //  I opted for KiBytes, MiBytes, GiBytes, if you want KBytes, change the 1024's into 1000's
     if (bytes < 1024) {
         return std.fmt.bufPrint(buf, "{d}B", .{self.size}) catch "0B";
     }
@@ -148,7 +149,7 @@ pub fn getFormattedPermissions(self: Self, buf: []u8) []const u8 {
     return buf[0..10];
 }
 
-// ===================== Testy =====================
+// ===================== Tests =====================
 
 fn testEntry(name: []const u8, is_dir: bool, size: usize) Self {
     return .{ .name = name, .extension = "", .is_dir = is_dir, .size = size, .permissions = @enumFromInt(0o644) };
@@ -166,17 +167,17 @@ fn expectOrder(comptime lessThan: fn (void, Self, Self) bool, expected: []const 
     for (expected, items) |name, item| try std.testing.expectEqualStrings(name, item.name);
 }
 
-test "triedenie podľa mena" {
+test "sorting by name" {
     try expectOrder(lessThanByName, &.{ "a.txt", "adir", "b.txt", "c.txt", "zdir" });
     try expectOrder(lessThanByNameDirsFirst, &.{ "adir", "zdir", "a.txt", "b.txt", "c.txt" });
 }
 
-test "triedenie podľa veľkosti: priečinky prvé, rovnaká veľkosť podľa mena" {
+test "sorting by size: dirs first, the same size then by name" {
     try expectOrder(lessThanBySizeAsc, &.{ "adir", "zdir", "c.txt", "a.txt", "b.txt" });
     try expectOrder(lessThanBySizeDesc, &.{ "adir", "zdir", "a.txt", "b.txt", "c.txt" });
 }
 
-test "triedenie podľa dátumu: najnovšie navrchu" {
+test "sorting by date: newest first" {
     var items = [_]Self{ testEntry("old", false, 0), testEntry("new", false, 0), testEntry("dir", true, 0) };
     items[0].date = .fromNanoseconds(1 * std.time.ns_per_s);
     items[1].date = .fromNanoseconds(2 * std.time.ns_per_s);
