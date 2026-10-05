@@ -174,7 +174,7 @@ pub fn main(init: std.process.Init) !void {
     }
 }
 
-// Otvorenie súboru: text v $VISUAL/$EDITOR, ostatné cez xdg-open
+// Otvorenie súboru: text v $VISUAL/$EDITOR, ostatné cez xdg-open (odpojené)
 fn openFile(
     io: std.Io,
     terminal: Terminal,
@@ -195,12 +195,11 @@ fn openFile(
     const stat = try std.Io.Dir.cwd().statFile(io, full_path, .{});
     if (stat.kind != .file) return error.NotARegularFile;
 
-    // Text otvoríme v editore v tomto termináli, ostatné cez xdg-open.
+    if (!fs.isTextFile(io, full_path)) return openDetached(io, full_path);
+
+    // Text otvoríme v editore v tomto termináli.
     // Cesta ide ako $1, takže ju netreba escapovať; $VISUAL/$EDITOR môžu mať aj argumenty.
-    const argv: []const []const u8 = if (fs.isTextFile(io, full_path))
-        &.{ "/bin/sh", "-c", "exec ${VISUAL:-${EDITOR:-vi}} \"$1\"", "znavi", full_path }
-    else
-        &.{ "xdg-open", full_path };
+    const argv: []const []const u8 = &.{ "/bin/sh", "-c", "exec ${VISUAL:-${EDITOR:-vi}} \"$1\"", "znavi", full_path };
 
     // Terminálový editor (vim, less...) musí dostať normálny terminál, nie náš RAW mód
     terminal.leaveRaw();
@@ -212,8 +211,8 @@ fn openFile(
         .stderr = .inherit,
     });
     const term = try child.wait(io);
-    // Napr. editor neexistuje (127) alebo xdg-open nenašiel aplikáciu. Pred návratom
-    // na našu obrazovku počkáme na Enter, inak by hláška programu hneď zmizla
+    // Napr. editor neexistuje (127). Pred návratom na našu obrazovku počkáme na Enter,
+    // inak by hláška programu hneď zmizla
     const ok = switch (term) {
         .exited => |code| code == 0,
         else => false,
@@ -227,6 +226,40 @@ fn openFile(
     }
     try terminal.enterRaw();
     if (!ok) return error.OpenCommandFailed;
+}
+
+// GUI program spustíme mimo nášho terminálu: nová session bez riadiaceho terminálu,
+// stdio na /dev/null. Ctrl+Z/Ctrl+C v znavi ho nezasiahne a znavi nečaká na jeho zatvorenie.
+// Linux: setsid(1) z util-linux, FreeBSD: daemon(8) zo základného systému. setsid skúšame
+// prvý, lebo na Linuxe môže byť nainštalovaný iný `daemon`, kde -f znamená foreground.
+// Chybu samotného xdg-open (napr. nenašiel aplikáciu) po odpojení už nevidíme; overíme
+// aspoň, že existuje.
+fn openDetached(io: std.Io, path: []const u8) !void {
+    var child = try std.process.spawn(io, .{
+        .argv = &.{
+            "/bin/sh",
+            "-c",
+            \\command -v xdg-open >/dev/null || exit 127
+            \\if command -v setsid >/dev/null; then exec setsid -f xdg-open "$1"
+            \\else exec daemon -f xdg-open "$1"; fi
+            ,
+            "znavi",
+            path,
+        },
+        .stdin = .ignore,
+        .stdout = .ignore,
+        .stderr = .ignore,
+    });
+    // setsid/daemon sa po odpojení hneď ukončí; počkáme naň, aby nezostal zombie
+    const term = try child.wait(io);
+    switch (term) {
+        .exited => |code| switch (code) {
+            0 => {},
+            127 => return error.XdgOpenNotFound,
+            else => return error.OpenCommandFailed,
+        },
+        else => return error.OpenCommandFailed,
+    }
 }
 
 // :!príkaz – spustí ho cez shell v aktuálnom adresári na normálnom termináli (ako vim),
