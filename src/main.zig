@@ -195,7 +195,7 @@ fn openFile(
     const stat = try std.Io.Dir.cwd().statFile(io, full_path, .{});
     if (stat.kind != .file) return error.NotARegularFile;
 
-    if (!fs.isTextFile(io, full_path)) return openDetached(io, full_path);
+    if (!fs.isTextFile(io, full_path)) return openDetached(io, state.current_dir, full_path);
 
     // Text otvoríme v editore v tomto termináli.
     // Cesta ide ako $1, takže ju netreba escapovať; $VISUAL/$EDITOR môžu mať aj argumenty.
@@ -206,6 +206,7 @@ fn openFile(
     errdefer terminal.enterRaw() catch {};
     var child = try std.process.spawn(io, .{
         .argv = argv,
+        .cwd = .{ .path = state.current_dir }, // vim :! a relatívne cesty majú platiť tu
         .stdin = .inherit,
         .stdout = .inherit,
         .stderr = .inherit,
@@ -234,7 +235,7 @@ fn openFile(
 // prvý, lebo na Linuxe môže byť nainštalovaný iný `daemon`, kde -f znamená foreground.
 // Chybu samotného xdg-open (napr. nenašiel aplikáciu) po odpojení už nevidíme; overíme
 // aspoň, že existuje.
-fn openDetached(io: std.Io, path: []const u8) !void {
+fn openDetached(io: std.Io, cwd: []const u8, path: []const u8) !void {
     var child = try std.process.spawn(io, .{
         .argv = &.{
             "/bin/sh",
@@ -246,6 +247,7 @@ fn openDetached(io: std.Io, path: []const u8) !void {
             "znavi",
             path,
         },
+        .cwd = .{ .path = cwd },
         .stdin = .ignore,
         .stdout = .ignore,
         .stderr = .ignore,
