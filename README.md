@@ -46,6 +46,7 @@ Press `?` in normal mode or `:?` in command mode inside znavi for the full list 
 | `/`                | Search (Enter keeps the filter, Esc clears) |
 | Backspace, `Ctrl+h`| Toggle hidden files                         |
 | `a`                | Alias mode                                  |
+| `r`                | Refresh directory contents                  |
 | `:`                | Command mode                                |
 | `?`                | Help                                        |
 | `q`, `Ctrl+c`      | Quit                                        |
@@ -56,6 +57,7 @@ Press `?` in normal mode or `:?` in command mode inside znavi for the full list 
 | Command     | Action                                         |
 |-------------|------------------------------------------------|
 | `:q`        | Quit                                           |
+| `:r`        | Refresh directory contents                     |
 | `:h`        | Toggle hidden files                            |
 | `:vd` `:vs` `:vp` `:vo` `:vg` `:va` | Toggle date, size, permissions, owner, group, alias columns |
 | `:sn` / `:sN` | Sort by name / name with directories first   |

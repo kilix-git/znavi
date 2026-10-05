@@ -16,6 +16,7 @@ pub const Command = struct {
 
 pub const commands = [_]Command{
     .{ .name = "q", .help = "Quit program", .run = quit },
+    .{ .name = "r", .help = "Refresh directory contents", .run = refresh },
     .{ .name = "h", .help = "Toggle hidden files", .run = toggleHidden },
     .{ .name = "vd", .help = "Toggle date visibility", .run = toggleView("date") },
     .{ .name = "vs", .help = "Toggle size visibility", .run = toggleView("size") },
@@ -35,6 +36,11 @@ pub const commands = [_]Command{
 
 fn quit(_: *ProgramState, _: *const View) Action {
     return .quit;
+}
+
+fn refresh(state: *ProgramState, view: *const View) Action {
+    state.refresh(view);
+    return .none;
 }
 
 fn showHelp(state: *ProgramState, _: *const View) Action {

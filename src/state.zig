@@ -109,6 +109,12 @@ pub const ProgramState = struct {
             .none;
     }
 
+    // Načíta adresár znova (napr. súbory zmenil iný program), kurzor ostane na položke
+    pub fn refresh(self: *ProgramState, view: *const View) void {
+        self.rememberSelected(view);
+        self.dir_changed = true;
+    }
+
     pub fn resetIndices(self: *ProgramState) void {
         self.global_index = 0;
     }

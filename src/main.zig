@@ -77,6 +77,15 @@ pub fn main(init: std.process.Init) !void {
         terminal_size = Terminal.getSize();
 
         if (state.dir_changed) {
+            // Zapamätaná položka (refresh, :!) ukazuje do dir_contents_arena, ktorú ideme
+            // uvoľniť – meno skopírujeme do frame arény, inak by sme porovnávali uvoľnenú pamäť
+            switch (state.pending_cursor) {
+                .item => |*target| {
+                    target.name = try frame_allocator.dupe(u8, target.name);
+                    target.extension = try frame_allocator.dupe(u8, target.extension);
+                },
+                else => {},
+            }
             // Pred načítaním nového obsahu kompletne vyčistíme starý zoznam a názvy súborov
             _ = dir_contents_arena.reset(.free_all);
             const dir_allocator = dir_contents_arena.allocator();

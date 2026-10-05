@@ -168,6 +168,7 @@ fn handleNormalMode(key: Key, state: *ProgramState, view: *const View, gpa: std.
                     }
                 }
             },
+            'r' => state.refresh(view),
             else => {},
         },
     }

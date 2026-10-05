@@ -273,6 +273,7 @@ const help_text =
     \\  :         - Enter Command Mode
     \\  /         - Search (Enter keeps filter, Esc clears it)
     \\  a         - Aliases (same as :a)
+    \\  r         - Refresh directory contents (same as :r)
     \\  ?         - Show this help screen
     \\  q         - Quit program (also Ctrl+c)
     \\  Ctrl+z    - Suspend (resume with fg)
