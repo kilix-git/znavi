@@ -11,6 +11,7 @@ const fs = @import("fs.zig");
 const cd_aliases = @import("aliases.zig");
 const Alias = cd_aliases.Alias;
 const handlers = @import("handlers.zig");
+const rename = @import("rename.zig");
 const handleKey = handlers.handleKey;
 const state_zig = @import("state.zig");
 const ProgramState = state_zig.ProgramState;
@@ -173,6 +174,15 @@ pub fn main(init: std.process.Init) !void {
                 state.rememberSelected(&view);
                 state.dir_changed = true;
             },
+            .bulk_rename => {
+                const tmp_dir = init.environ_map.get("TMPDIR") orelse "/tmp";
+                bulkRename(io, terminal, stdout, stdin, frame_allocator, tmp_dir, state.current_dir, view.visible) catch |err| {
+                    active_error = err;
+                };
+                // Aj po chybe mohla časť súborov zmeniť meno
+                state.rememberSelected(&view);
+                state.dir_changed = true;
+            },
         }
     }
 
@@ -207,20 +217,10 @@ fn openFile(
     if (!fs.isTextFile(io, full_path)) return openDetached(io, state.current_dir, full_path);
 
     // Text otvoríme v editore v tomto termináli.
-    // Cesta ide ako $1, takže ju netreba escapovať; $VISUAL/$EDITOR môžu mať aj argumenty.
-    const argv: []const []const u8 = &.{ "/bin/sh", "-c", "exec ${VISUAL:-${EDITOR:-vi}} \"$1\"", "znavi", full_path };
-
     // Terminálový editor (vim, less...) musí dostať normálny terminál, nie náš RAW mód
     terminal.leaveRaw();
     errdefer terminal.enterRaw() catch {};
-    var child = try std.process.spawn(io, .{
-        .argv = argv,
-        .cwd = .{ .path = state.current_dir }, // vim :! a relatívne cesty majú platiť tu
-        .stdin = .inherit,
-        .stdout = .inherit,
-        .stderr = .inherit,
-    });
-    const term = try child.wait(io);
+    const term = try runEditor(io, state.current_dir, full_path);
     // Napr. editor neexistuje (127). Pred návratom na našu obrazovku počkáme na Enter,
     // inak by hláška programu hneď zmizla
     const ok = switch (term) {
@@ -236,6 +236,84 @@ fn openFile(
     }
     try terminal.enterRaw();
     if (!ok) return error.OpenCommandFailed;
+}
+
+// $VISUAL, potom $EDITOR, potom vi – v tomto termináli (volať mimo RAW módu).
+// Cesta ide ako $1, takže ju netreba escapovať; $VISUAL/$EDITOR môžu mať aj argumenty.
+fn runEditor(io: std.Io, cwd: []const u8, path: []const u8) !std.process.Child.Term {
+    var child = try std.process.spawn(io, .{
+        .argv = &.{ "/bin/sh", "-c", "exec ${VISUAL:-${EDITOR:-vi}} \"$1\"", "znavi", path },
+        .cwd = .{ .path = cwd }, // vim :! a relatívne cesty majú platiť tu
+        .stdin = .inherit,
+        .stdout = .inherit,
+        .stderr = .inherit,
+    });
+    return child.wait(io);
+}
+
+// :cw – mená viditeľných súborov dáme do dočasného súboru, používateľ ich upraví v editore
+// a zmenené riadky premenujeme (rename.zig). Ak niečo nevyšlo, vypíšeme prečo a počkáme na Enter.
+fn bulkRename(
+    io: std.Io,
+    terminal: Terminal,
+    stdout: *std.Io.Writer,
+    stdin: *std.Io.Reader,
+    allocator: std.mem.Allocator,
+    tmp_dir: []const u8,
+    cwd: []const u8,
+    visible: []const file_entry,
+) !void {
+    // Rovnaké poradie ako na obrazovke, bez ".."; meno s novým riadkom sa do súboru nedá zapísať
+    var sources: std.ArrayList([]const u8) = .empty;
+    var list: std.ArrayList(u8) = .empty;
+    for (visible) |item| {
+        if (std.mem.eql(u8, item.name, "..")) continue;
+        const name = try std.fmt.allocPrint(allocator, "{s}{s}", .{ item.name, item.extension });
+        if (std.mem.indexOfAny(u8, name, "\r\n") != null) continue;
+        try sources.append(allocator, name);
+        try list.print(allocator, "{s}\n", .{name});
+    }
+    if (sources.items.len == 0) return error.NothingToRename;
+
+    // Náhodné meno a exclusive, aby sme neprepísali cudzí súbor v zdieľanom /tmp
+    var random_bytes: [8]u8 = undefined;
+    io.random(&random_bytes);
+    const list_path = try std.fmt.allocPrint(allocator, "{s}/znavi-cw.{x}", .{ tmp_dir, &random_bytes });
+    {
+        const file = try std.Io.Dir.cwd().createFile(io, list_path, .{ .exclusive = true, .permissions = .fromMode(0o600) });
+        defer file.close(io);
+        try file.writeStreamingAll(io, list.items);
+    }
+    defer std.Io.Dir.cwd().deleteFile(io, list_path) catch {};
+
+    terminal.leaveRaw();
+    defer terminal.enterRaw() catch {};
+
+    // Editor ukončený s chybou (vim :cq) = zrušenie, nič nepremenujeme
+    const term = try runEditor(io, cwd, list_path);
+    const ok = switch (term) {
+        .exited => |code| code == 0,
+        else => false,
+    };
+    if (!ok) {
+        try stdout.writeAll("\ncw: editor did not exit cleanly, nothing renamed.");
+        try waitForEnter(stdout, stdin);
+        return error.RenameCancelled;
+    }
+
+    const edited = try std.Io.Dir.cwd().readFileAlloc(io, list_path, allocator, .limited(64 << 20));
+    var dir = try std.Io.Dir.openDirAbsolute(io, cwd, .{});
+    defer dir.close(io);
+
+    const outcome = rename.run(io, allocator, dir, sources.items, edited, stdout) catch |err| {
+        try waitForEnter(stdout, stdin);
+        return err;
+    };
+    if (outcome.failed > 0) {
+        try stdout.print("cw: {d} renamed, {d} failed.", .{ outcome.renamed, outcome.failed });
+        try waitForEnter(stdout, stdin);
+        return error.RenameFailed;
+    }
 }
 
 // GUI program spustíme mimo nášho terminálu: nová session bez riadiaceho terminálu,
@@ -341,4 +419,5 @@ test {
     _ = state_zig;
     _ = @import("commands.zig");
     _ = @import("handlers.zig");
+    _ = rename;
 }

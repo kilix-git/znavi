@@ -63,6 +63,7 @@ Press `?` in normal mode or `:?` in command mode inside znavi for the full list 
 | `:sn` / `:sN` | Sort by name / name with directories first   |
 | `:sd` / `:sD` | Sort by date / date with directories first   |
 | `:ss` / `:sS` | Sort by size, smallest / largest first       |
+| `:cw`       | Batch rename the visible files in your editor (see below) |
 | `:a`        | Aliases                                        |
 | `:<number>` | Jump to that index                             |
 | `:!<cmd>`   | Run a shell command in the current directory (`%` = selected file, `\%` = literal `%`) |
@@ -76,7 +77,19 @@ regular files are opened, so a symlink pointing to a FIFO or device is refused
 instead of hanging. If the program fails (for example, the editor isn't
 installed), znavi shows its error and waits for ENTER.
 
-## Aliases
+## Batch rename
+
+`:cw` writes the names of the files you currently see (same order, hidden files
+and search filter respected, `..` left out) into a temporary file and opens it
+in `$VISUAL`, then `$EDITOR`, then `vi`. Edit the lines, save and quit; every
+changed line renames that file. Swaps and chains (`a` to `b`, `b` to `c`) work,
+and a name with a `/` moves the file into that directory, creating it if needed.
+
+Nothing is renamed if the editor exits with an error (`:cq` in vim), if the
+number of lines changed, if two files would get the same name, or if a rename
+would overwrite a file that isn't being renamed itself. If a single rename
+fails partway, the file keeps its old name and znavi tells you which one.
+
 
 znavi reads `~/.aliases` and parses aliases that only change directory:
 

@@ -169,6 +169,8 @@ pub const Action = union(enum) {
     jump_to_alias: Alias,
     // :!príkaz – text za výkričníkom (ukazuje do command_buffer, main ho spustí hneď)
     run_shell: []const u8,
+    // :cw – batch rename of the visible files in $EDITOR (main runs it, see rename.zig)
+    bulk_rename,
 };
 
 // Uloží kópiu cesty do histórie; ak append zlyhá, kópiu uvoľníme, aby neunikla

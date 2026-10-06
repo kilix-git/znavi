@@ -30,6 +30,7 @@ pub const commands = [_]Command{
     .{ .name = "sD", .help = "Sort by date, dirs first", .run = sortBy(.by_date_dirs_first) },
     .{ .name = "ss", .help = "Sort by size, smallest first", .run = sortBy(.by_size_asc) },
     .{ .name = "sS", .help = "Sort by size, largest first", .run = sortBy(.by_size_desc) },
+    .{ .name = "cw", .help = "Batch rename visible files in $EDITOR", .run = bulkRename },
     .{ .name = "a", .help = "Aliases: type to filter (1 match = go), Enter = go", .run = enterAliases },
     .{ .name = "?", .help = "Show this help screen", .run = showHelp },
 };
@@ -41,6 +42,10 @@ fn quit(_: *ProgramState, _: *const View) Action {
 fn refresh(state: *ProgramState, view: *const View) Action {
     state.refresh(view);
     return .none;
+}
+
+fn bulkRename(_: *ProgramState, _: *const View) Action {
+    return .bulk_rename;
 }
 
 fn showHelp(state: *ProgramState, _: *const View) Action {
