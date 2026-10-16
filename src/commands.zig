@@ -1,4 +1,4 @@
-// Príkazy pre command mód (:vd, :sn, ...)
+// command mode commands (like: :vd, :sn, ...)
 const std = @import("std");
 const state_zig = @import("state.zig");
 const ProgramState = state_zig.ProgramState;
@@ -6,8 +6,8 @@ const View = state_zig.View;
 const Action = state_zig.Action;
 const Sorting = state_zig.Sorting;
 
-// Príkazy pre command mód (:vd, :sn, ...). Z tej istej tabuľky sa generuje aj nápoveda,
-// takže nový príkaz stačí pridať sem a v nápovede sa objaví sám
+// commands for command mode (:vd, :sn, ...). the same table is used to generate :h or --help text,
+// so it's sufficient to add new commands here and it will appear in --help automagically
 pub const Command = struct {
     name: []const u8,
     help: []const u8,
@@ -64,7 +64,7 @@ fn toggleHidden(state: *ProgramState, view: *const View) Action {
     return .none;
 }
 
-// Prvý zapnutý z :vo/:vg – uid/gid ešte nemáme načítané, načítame adresár znova
+// if we changed :vo or :vg, we need to re-read the contents
 fn toggleOwner(state: *ProgramState, _: *const View) Action {
     state.viewing.owner = !state.viewing.owner;
     if (state.viewing.owner and !state.viewing.group) state.dir_changed = true;
@@ -77,7 +77,7 @@ fn toggleGroup(state: *ProgramState, _: *const View) Action {
     return .none;
 }
 
-// Prepne jeden stĺpec vo Viewing podľa mena poľa (vygeneruje sa funkcia pre každé pole zvlášť)
+// TODO: comprehend this
 fn toggleView(comptime field: []const u8) *const fn (*ProgramState, *const View) Action {
     return struct {
         fn run(state: *ProgramState, _: *const View) Action {
