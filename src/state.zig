@@ -1,4 +1,4 @@
-// Stav programu (žije medzi frame-ami), dáta pre jeden frame (View) a ich výpočet
+// Program state (lives across frames), data for a single frame (View) and how it is computed
 const std = @import("std");
 const file_entry = @import("FileEntry.zig");
 const Terminal = @import("Terminal.zig");
@@ -29,23 +29,23 @@ pub const Viewing = struct {
 
 pub const PendingCursor = union(enum) {
     none,
-    // Po h (alebo l tou istou cestou späť dole): na priečinok, z ktorého sme prišli (história forward)
+    // After h (or l going back down the same path): on the directory we came from (forward history)
     from_history,
-    // Po triedení / prepnutí skrytých: na tú istú položku (index sa zmení, súbor nie)
+    // After sorting / toggling hidden files: on the same item (the index changes, the file doesn't)
     item: file_entry,
 };
 
-// Odvodené dáta pre jeden frame. Prepočítajú sa z ProgramState v každom cykle a žijú
-// vo frame aréne, preto nie sú v ProgramState (medzi frame-ami by ukazovali do uvoľnenej pamäte)
+// Derived data for a single frame. Recomputed from ProgramState on every iteration and lives
+// in the frame arena, which is why it isn't in ProgramState (across frames it would point to freed memory)
 pub const View = struct {
-    // Položky po skrytí skrytých súborov a filtri vyhľadávania; global_index ukazuje sem
+    // Items after hiding hidden files and applying the search filter; global_index points here
     visible: []const file_entry = &.{},
-    // Riadky, ktoré sa zmestia na obrazovku, a index prvého z nich vo visible
+    // Rows that fit on the screen, and the index of the first of them in visible
     window: []const file_entry = &.{},
     window_start: usize = 0,
-    // Alias mód: aliasy zodpovedajúce filtru
+    // Alias mode: aliases matching the filter
     alias_matches: []const Alias = &.{},
-    // Nápoveda: počet strán pri aktuálnej výške terminálu
+    // Help: number of pages at the current terminal height
     help_pages: usize = 1,
 };
 
@@ -59,27 +59,27 @@ pub const ProgramState = struct {
     command_buffer: std.ArrayList(u8),
     search_buffer: std.ArrayList(u8),
     current_dir_contents: []file_entry = &.{},
-    // Count prefix pre j/k (5j): rozpísané číslo, 0 = žiadny count
+    // Count prefix for j/k (5j): the number being typed, 0 = no count
     count: usize = 0,
-    // Kam dať kurzor v najbližšom frame, keď už poznáme nový zoznam (iba raz, nie každý frame)
+    // Where to put the cursor in the next frame, once we know the new list (only once, not every frame)
     pending_cursor: PendingCursor = .none,
-    // cd aliasy zo ~/.aliases (načítané raz pri štarte, žijú v aréne procesu)
+    // cd aliases from ~/.aliases (loaded once at startup, live in the process arena)
     aliases: []const Alias = &.{},
-    // Cache uid -> meno a gid -> meno, každé id sa cez libc hľadá iba raz (žije v aréne procesu)
+    // Cache uid -> name and gid -> name, each id is looked up via libc only once (lives in the process arena)
     user_names: std.AutoHashMapUnmanaged(u32, []const u8) = .empty,
     group_names: std.AutoHashMapUnmanaged(u32, []const u8) = .empty,
-    // Alias mód (:a): čo píšeme a vybraný riadok (zodpovedajúce aliasy sú vo View)
+    // Alias mode (:a): what we're typing and the selected row (the matching aliases are in View)
     alias_buffer: std.ArrayList(u8) = .empty,
     alias_index: usize = 0,
-    // Nápoveda (?): strana, ktorú práve ukazujeme (od 0)
+    // Help (?): the page currently shown (from 0)
     help_page: usize = 0,
     history_forward: std.ArrayList([]const u8),
 
-    // Meno aliasu, ktorý vedie do tohto adresára (prvý nájdený), inak null
+    // Name of the alias that leads to this directory (the first one found), otherwise null
     pub fn aliasFor(self: *const ProgramState, file: file_entry) ?[]const u8 {
         if (!file.is_dir or self.aliases.len == 0) return null;
         var path_buf: [std.fs.max_path_bytes]u8 = undefined;
-        // Na "/" už lomka je, inde ju medzi adresár a meno pridáme
+        // On "/" the slash is already there, elsewhere we add one between the directory and the name
         const sep = if (std.mem.endsWith(u8, self.current_dir, "/")) "" else "/";
         const full_path = std.fmt.bufPrint(&path_buf, "{s}{s}{s}", .{ self.current_dir, sep, file.name }) catch return null;
         for (self.aliases) |alias| {
@@ -88,20 +88,20 @@ pub const ProgramState = struct {
         return null;
     }
 
-    // Prepne do alias módu s prázdnym filtrom (kláves a alebo príkaz :a)
-    // Otvorí nápovedu na prvej strane (kláves ? alebo príkaz :?)
+    // Opens help on the first page (key ? or command :?)
     pub fn enterHelp(self: *ProgramState) void {
         self.program_mode = .help;
         self.help_page = 0;
     }
 
+    // Switches to alias mode with an empty filter (key a or command :a)
     pub fn enterAliasMode(self: *ProgramState) void {
         self.program_mode = .alias;
         self.alias_buffer.clearRetainingCapacity();
         self.alias_index = 0;
     }
 
-    // Zapamätá si vybranú položku; main ju po prepočítaní zoznamu znova nájde
+    // Remembers the selected item; main finds it again after the list is recomputed
     pub fn rememberSelected(self: *ProgramState, view: *const View) void {
         self.pending_cursor = if (self.global_index < view.visible.len)
             .{ .item = view.visible[self.global_index] }
@@ -109,7 +109,7 @@ pub const ProgramState = struct {
             .none;
     }
 
-    // Načíta adresár znova (napr. súbory zmenil iný program), kurzor ostane na položke
+    // Reloads the directory (e.g. another program changed the files), the cursor stays on the item
     pub fn refresh(self: *ProgramState, view: *const View) void {
         self.rememberSelected(view);
         self.dir_changed = true;
@@ -120,7 +120,7 @@ pub const ProgramState = struct {
     }
 
     pub fn sortContents(self: *ProgramState) void {
-        // ".." pridáva getDirContents ako prvú položku – necháme ju na indexe 0 v každom triedení
+        // ".." is added by getDirContents as the first item – keep it at index 0 in every sort
         var items = self.current_dir_contents;
         if (items.len > 0 and std.mem.eql(u8, items[0].name, "..")) items = items[1..];
 
@@ -135,21 +135,21 @@ pub const ProgramState = struct {
     }
 
     pub fn clearForwardHistory(self: *ProgramState, allocator: std.mem.Allocator) void {
-        // Prejdeme všetky uložené stringy a uvoľníme ich z pamäte
+        // Go through all stored strings and free them
         for (self.history_forward.items) |item| {
             allocator.free(item);
         }
-        // Teraz môžeme bezpečne vyčistiť samotný zoznam
+        // Now we can safely clear the list itself
         self.history_forward.clearRetainingCapacity();
     }
 
-    // Nastaví nový current_dir (vlastníctvo prechádza na state) a uvoľní starý
+    // Sets a new current_dir (ownership passes to state) and frees the old one
     pub fn setCurrentDir(self: *ProgramState, allocator: std.mem.Allocator, new_dir: []const u8) void {
         allocator.free(self.current_dir);
         self.current_dir = new_dir;
     }
 
-    // Uvoľní všetku pamäť, ktorú state vlastní (current_dir, buffre, históriu)
+    // Frees all memory owned by state (current_dir, buffers, history)
     pub fn deinit(self: *ProgramState, allocator: std.mem.Allocator) void {
         allocator.free(self.current_dir);
         self.command_buffer.deinit(allocator);
@@ -160,14 +160,14 @@ pub const ProgramState = struct {
     }
 };
 
-// Čo má main spraviť po spracovaní klávesu – handlery samy nič nespúšťajú ani nekreslia
+// What main should do after handling a key – handlers themselves neither run nor draw anything
 pub const Action = union(enum) {
     none,
     quit,
     suspend_process,
     open_file: file_entry,
     jump_to_alias: Alias,
-    // :!príkaz – text za výkričníkom (ukazuje do command_buffer, main ho spustí hneď)
+    // :!command – the text after the exclamation mark (points into command_buffer, main runs it right away)
     run_shell: []const u8,
     // :cw – batch rename of the visible files in $EDITOR (main runs it, see rename.zig)
     bulk_rename,
@@ -175,14 +175,14 @@ pub const Action = union(enum) {
     interactive_shell,
 };
 
-// Uloží kópiu cesty do histórie; ak append zlyhá, kópiu uvoľníme, aby neunikla
+// Saves a copy of the path to the history; if append fails, the copy is freed so it doesn't leak
 pub fn pushHistory(list: *std.ArrayList([]const u8), allocator: std.mem.Allocator, path: []const u8) !void {
     const copy = try allocator.dupe(u8, path);
     errdefer allocator.free(copy);
     try list.append(allocator, copy);
 }
 
-// Položky, ktoré používateľ vidí: bez skrytých (ak ich nezobrazujeme) a podľa vyhľadávania
+// Items the user sees: without hidden ones (if we don't show them) and filtered by the search
 pub fn getVisibleItems(allocator: std.mem.Allocator, state: *const ProgramState) ![]const file_entry {
     var items: []const file_entry = state.current_dir_contents;
     if (!state.viewing.hidden) items = try getOnlyVisibleItems(allocator, items);
@@ -191,7 +191,7 @@ pub fn getVisibleItems(allocator: std.mem.Allocator, state: *const ProgramState)
 }
 
 fn getOnlyVisibleItems(allocator: std.mem.Allocator, items: []const file_entry) ![]const file_entry {
-    // Jednoduchý filter na viditeľné veci
+    // A simple filter for visible things
     var result: std.ArrayList(file_entry) = .empty;
     errdefer result.deinit(allocator);
 
@@ -213,7 +213,7 @@ fn getFilteredItemsByName(
     var name_buf: [std.fs.max_path_bytes]u8 = undefined;
 
     for (items) |item| {
-        // Spojíme meno a príponu, aby vyhľadávanie videlo celé meno súboru
+        // Join the name and extension so the search sees the whole file name
         const full_name = std.fmt.bufPrint(&name_buf, "{s}{s}", .{ item.name, item.extension }) catch item.name;
         if (std.ascii.indexOfIgnoreCase(full_name, search_str) != null) {
             try result.append(allocator, item);
@@ -222,13 +222,13 @@ fn getFilteredItemsByName(
     return result.toOwnedSlice(allocator);
 }
 
-// Okno riadkov na obrazovke: kurzor držíme v strede, pri okrajoch zoznamu sa okno zastaví
+// Window of rows on the screen: the cursor is kept in the middle, the window stops at the list's edges
 pub fn setWindow(view: *View, terminal_size: Terminal.Size, global_index: usize) void {
     const total_rows_available = terminal_size.rows -| TERMINAL_PADDING;
     const half_window = total_rows_available / 2;
     var start_index: usize = global_index -| half_window;
 
-    // Korekcia konca okna voči celkovému počtu viditeľných položiek
+    // Correct the end of the window against the total number of visible items
     var end_index = start_index + total_rows_available;
     if (end_index > view.visible.len) {
         end_index = view.visible.len;
@@ -238,13 +238,13 @@ pub fn setWindow(view: *View, terminal_size: Terminal.Size, global_index: usize)
     view.window = view.visible[start_index..end_index];
 }
 
-// Kurzor na miesto zapamätané v predchádzajúcom kroku (pending_cursor), keď už poznáme nový zoznam
+// Cursor to the place remembered in the previous step (pending_cursor), once we know the new list
 pub fn applyPendingCursor(state: *ProgramState, visible: []const file_entry) void {
     const pending = state.pending_cursor;
     state.pending_cursor = .none;
     switch (pending) {
         .none => {},
-        // G, gg, Ctrl+d či :<n> potom kurzor normálne presunú, lebo toto beží iba raz
+        // G, gg, Ctrl+d or :<n> then move the cursor normally, because this runs only once
         .from_history => {
             const prev = state.history_forward.getLastOrNull() orelse return;
             for (visible, 0..) |item, idx| {
@@ -254,8 +254,8 @@ pub fn applyPendingCursor(state: *ProgramState, visible: []const file_entry) voi
                 }
             }
         },
-        // Meno + prípona (foo.c vs foo.h). Ak tam už nie je (napr. sme ju práve skryli),
-        // ostaneme na rovnakom riadku v rámci zoznamu
+        // Name + extension (foo.c vs foo.h). If it's no longer there (e.g. we just hid it),
+        // we stay on the same row in the list
         .item => |target| {
             state.global_index = @min(state.global_index, visible.len -| 1);
             for (visible, 0..) |item, idx| {
@@ -268,11 +268,11 @@ pub fn applyPendingCursor(state: *ProgramState, visible: []const file_entry) voi
     }
 }
 
-// ===================== Testy =====================
+// ===================== Tests =====================
 
-// Pomocné funkcie pre testy (používajú ich aj handlers.zig a render.zig)
+// Test helpers (also used by handlers.zig and render.zig)
 
-// Stav s vlastnou kópiou cesty (deinit ju uvoľní)
+// State with its own copy of the path (deinit frees it)
 pub fn testState(dir: []const u8) !ProgramState {
     return .{
         .current_dir = try std.testing.allocator.dupe(u8, dir),
@@ -286,10 +286,10 @@ pub fn testEntry(name: []const u8, is_dir: bool, size: usize) file_entry {
     return .{ .name = name, .extension = "", .is_dir = is_dir, .size = size, .permissions = @enumFromInt(0o644) };
 }
 
-test "setWindow drží kurzor v strede a zastaví sa na okrajoch" {
+test "setWindow keeps the cursor in the middle and stops at the edges" {
     var items: [100]file_entry = undefined;
     for (&items) |*item| item.* = testEntry("f", false, 0);
-    const size: Terminal.Size = .{ .rows = 24, .cols = 80 }; // 20 riadkov na zoznam
+    const size: Terminal.Size = .{ .rows = 24, .cols = 80 }; // 20 rows for the list
 
     var view: View = .{ .visible = &items };
     setWindow(&view, size, 50);
@@ -300,7 +300,7 @@ test "setWindow drží kurzor v strede a zastaví sa na okrajoch" {
     try std.testing.expectEqual(@as(usize, 80), view.window_start);
     try std.testing.expectEqual(@as(usize, 20), view.window.len);
 
-    // Krátky zoznam: celý na obrazovke
+    // Short list: all of it on screen
     view = .{ .visible = items[0..5] };
     setWindow(&view, size, 3);
     try std.testing.expectEqual(@as(usize, 0), view.window_start);

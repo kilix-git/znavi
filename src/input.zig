@@ -1,4 +1,4 @@
-// Čítanie klávesov: bajty zo stdin (vrátane escape sekvencií šípok) -> Key
+// Key reading: bytes from stdin (including arrow escape sequences) -> Key
 const std = @import("std");
 
 pub const Key = union(enum) {
@@ -20,13 +20,13 @@ pub const Key = union(enum) {
     char: u8,
 };
 
-// typing: v command / search / alias móde chceme písmená ako čisté znaky, nie príkazy
+// typing: in command / search / alias mode we want letters as plain characters, not commands
 pub fn readKey(stdin: anytype, typing: bool) !Key {
     const byte = try stdin.takeByte();
 
-    if (byte == 27) { // Začiatok escape sekvencie
-        // Šípky prídu naraz (ESC [ A), samotný Esc príde sám.
-        // Pozrieme sa do buffera bez blokovania.
+    if (byte == 27) { // Start of an escape sequence
+        // Arrows arrive all at once (ESC [ A), a lone Esc arrives by itself.
+        // Peek into the buffer without blocking.
         const pending = stdin.buffered();
         if (pending.len >= 2 and pending[0] == '[') {
             const code = pending[1];
@@ -37,28 +37,28 @@ pub fn readKey(stdin: anytype, typing: bool) !Key {
                 'C' => .right,
                 'D' => .left,
                 else => blk: {
-                    // Neznáma sekvencia (napr. Delete = ESC [ 3 ~), zahodíme zvyšok
+                    // Unknown sequence (e.g. Delete = ESC [ 3 ~), discard the rest
                     stdin.toss(stdin.buffered().len);
                     break :blk Key{ .char = 27 };
                 },
             };
         }
-        return Key{ .char = 27 }; // Samostatný Esc
+        return Key{ .char = 27 }; // Lone Esc
     }
 
-    // Ctrl+C ukončí program v každom režime (ISIG je vypnutý, takže príde ako bajt 3)
+    // Ctrl+C quits the program in every mode (ISIG is off, so it arrives as byte 3)
     if (byte == 3) return .quit;
-    // Ctrl+Z (bajt 26) – suspend rieši main, tiež v každom režime
+    // Ctrl+Z (byte 26) – suspending is handled by main, also in every mode
     if (byte == 26) return .ctrl_z;
 
-    // Ak píšeme príkaz, chceme klávesy ako 'q', 'j', 'k' posielať ako čisté znaky!
+    // While typing a command we want keys like 'q', 'j', 'k' sent as plain characters!
     if (typing) {
         return switch (byte) {
-            8, 127 => .backspace, // Backspace ale chceme mazať aj v príkazovom riadku
+            8, 127 => .backspace, // But Backspace should still delete in the command line
             else => Key{ .char = byte },
         };
     }
-    // Mapovanie bežných kláves na akcie
+    // Map ordinary keys to actions
     return switch (byte) {
         '?' => .help,
         'k' => .up,
@@ -69,13 +69,13 @@ pub fn readKey(stdin: anytype, typing: bool) !Key {
         4 => .ctrl_d,
         21 => .ctrl_u,
         'G' => .go_bottom,
-        'g' => { // Začiatok sekvencie gg
-            // Pokúsime sa okamžite prečítať druhý znak
+        'g' => { // Start of the gg sequence
+            // Try to read the second character right away
             const next = stdin.takeByte() catch return Key{ .char = byte };
             if (next == 'g') {
                 return .go_top;
             }
-            // Ak to nebolo 'g', vrátime pôvodný znak (alebo implementuj switch na iné g-príkazy)
+            // If it wasn't 'g', return the character (or implement a switch for other g-commands)
             return Key{ .char = next };
         },
         ':' => .command,

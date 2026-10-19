@@ -18,19 +18,19 @@ const ProgramState = state_zig.ProgramState;
 const View = state_zig.View;
 
 pub fn main(init: std.process.Init) !void {
-    const io = init.io; //vezmeme si interface io programu
-    // gpa pre current_dir, históriu a buffre – tie uvoľňujeme ručne cez free/deinit
+    const io = init.io; // take the program's io interface
+    // gpa for current_dir, history and buffers – we free those by hand with free/deinit
     const gpa = init.gpa;
 
-    // arena s dlhsou zivotnostou (Vyčistí sa IBA pri zmene adresára alebo refreshu)
+    // long-lived arena (cleared ONLY on a directory change or refresh)
     var dir_contents_arena = std.heap.ArenaAllocator.init(init.gpa);
     defer dir_contents_arena.deinit();
 
-    // arena pre dočasné stringy v rámci jedného while loopu, /napr. xdg-open cesty)
+    // arena for temporary strings within one loop iteration (e.g. xdg-open paths)
     var one_cycle_arena = std.heap.ArenaAllocator.init(init.gpa);
     defer one_cycle_arena.deinit();
 
-    // Štartovací adresár ešte pred RAW módom, aby chybová hláška išla normálne do shellu
+    // Starting directory before RAW mode, so an error message goes to the shell normally
     const argv = try init.minimal.args.toSlice(init.arena.allocator());
     const start_arg: ?[]const u8 = if (argv.len > 1) argv[1] else null;
     var buffer: [std.fs.max_path_bytes]u8 = undefined;
@@ -39,25 +39,25 @@ pub fn main(init: std.process.Init) !void {
         std.process.exit(1);
     };
 
-    // nastavenie STDOUT pre pisanie vystupu
+    // set up STDOUT for writing output
     var stdout_buffer: [4096]u8 = undefined;
     var stdout_writer = std.Io.File.Writer.init(std.Io.File.stdout(), init.io, &stdout_buffer);
     const stdout = &stdout_writer.interface;
 
-    // nastavenie STDIN pre citanie vstupu
+    // set up STDIN for reading input
     var stdin_buffer: [16]u8 = undefined;
     var stdin_reader = std.Io.File.stdin().reader(init.io, &stdin_buffer);
     const stdin = &stdin_reader.interface;
 
-    // inicializujeme terminal a odovzdame mu writer aj reader
+    // initialize the terminal and hand it the writer
     const terminal = try Terminal.init(&stdout_writer);
-    // pri odchode z main sa vsetko vrati do povodneho stavu uvolnime pamat
+    // on leaving main everything is restored to its original state
     defer terminal.deinit();
-    // inicializacia velkosti terminalu, default UNIX terminal je 24x80
+    // initial terminal size, the default UNIX terminal is 24x80
     var terminal_size: Terminal.Size = .{ .rows = 24, .cols = 80 };
     // default sorting by name dirs first
     var state = ProgramState{
-        // skopírujeme z buffera na stacku do gpa, aby sa current_dir dal neskôr uvoľniť
+        // copy from the stack buffer into gpa so current_dir can be freed later
         .current_dir = try gpa.dupe(u8, start_dir),
         .command_buffer = .empty,
         .search_buffer = .empty,
@@ -65,7 +65,7 @@ pub fn main(init: std.process.Init) !void {
     };
     defer state.deinit(gpa);
 
-    // cd aliasy zo ~/.aliases; ak súbor nejde prečítať, pokračujeme bez aliasov
+    // cd aliases from ~/.aliases; if the file can't be read, we continue without aliases
     if (init.environ_map.get("HOME")) |home| {
         state.aliases = cd_aliases.loadAliases(io, init.arena.allocator(), home) catch &.{};
     }
@@ -78,8 +78,8 @@ pub fn main(init: std.process.Init) !void {
         terminal_size = Terminal.getSize();
 
         if (state.dir_changed) {
-            // Zapamätaná položka (refresh, :!) ukazuje do dir_contents_arena, ktorú ideme
-            // uvoľniť – meno skopírujeme do frame arény, inak by sme porovnávali uvoľnenú pamäť
+            // The remembered item (refresh, :!) points into dir_contents_arena, which we are about to
+            // free – copy the name into the frame arena, otherwise we would compare freed memory
             switch (state.pending_cursor) {
                 .item => |*target| {
                     target.name = try frame_allocator.dupe(u8, target.name);
@@ -87,13 +87,13 @@ pub fn main(init: std.process.Init) !void {
                 },
                 else => {},
             }
-            // Pred načítaním nového obsahu kompletne vyčistíme starý zoznam a názvy súborov
+            // Before loading new contents, completely clear the old list and file names
             _ = dir_contents_arena.reset(.free_all);
             const dir_allocator = dir_contents_arena.allocator();
-            // current_dir_contents naplnime novymi polozkami
+            // fill current_dir_contents with the new entries
             var skipped_error: ?anyerror = null;
             if (fs.getDirContents(io, dir_allocator, state.current_dir, &skipped_error, state.viewing.owner or state.viewing.group)) |contents| {
-                // uid/gid -> mená (z cache, nové id hľadáme v libc iba raz)
+                // uid/gid -> names (from the cache, a new id is looked up in libc only once)
                 for (contents) |*entry| {
                     entry.owner_name = try fs.lookupName(.user, &state.user_names, init.arena.allocator(), entry.owner);
                     entry.group_name = try fs.lookupName(.group, &state.group_names, init.arena.allocator(), entry.group);
@@ -101,18 +101,18 @@ pub fn main(init: std.process.Init) !void {
                 state.current_dir_contents = contents;
                 state.sortContents();
                 state.dir_changed = false;
-                // null ak je všetko v poriadku, inak chyba položky, ktorú sme museli preskočiť
+                // null if everything is fine, otherwise the error of an entry we had to skip
                 active_error = skipped_error;
             } else |err| {
-                active_error = err; // Chybu si zapamätáme len na jedno vykreslenie
+                active_error = err; // Remember the error for one draw only
                 state.dir_changed = false;
 
-                // Záchranný krok pre stav - napr. prázdny adresár, aby aplikácia nezamrzla
+                // Fallback state - e.g. an empty directory, so the app doesn't freeze
                 state.current_dir_contents = &.{};
             }
         }
 
-        // Dáta pre tento frame; žijú iba do konca cyklu (frame aréna)
+        // Data for this frame; lives only until the end of the loop iteration (frame arena)
         var view: View = .{ .visible = try state_zig.getVisibleItems(frame_allocator, &state) };
         state_zig.applyPendingCursor(&state, view.visible);
         state_zig.setWindow(&view, terminal_size, state.global_index);
@@ -121,12 +121,12 @@ pub fn main(init: std.process.Init) !void {
         const display_path = try render.shortenPath(state.current_dir, terminal_size.cols, &dir_buf);
 
         if (state.program_mode == .help) {
-            // Počet strán závisí od výšky terminálu; po zmenšení okna ostaneme na poslednej
+            // The page count depends on the terminal height; after shrinking the window we stay on the last page
             view.help_pages = render.helpPageCount(terminal_size.rows);
             state.help_page = @min(state.help_page, view.help_pages - 1);
             try render.drawHelpScreen(stdout, state.help_page, terminal_size.rows);
         } else if (state.program_mode == .alias) {
-            // Alias mód má vlastnú obrazovku iba so zoznamom aliasov
+            // Alias mode has its own screen with just the list of aliases
             view.alias_matches = try cd_aliases.getFilteredAliases(frame_allocator, state.aliases, state.alias_buffer.items);
             state.alias_index = @min(state.alias_index, view.alias_matches.len -| 1);
             try render.drawAliasScreen(stdout, &state, &view, active_error, terminal_size);
@@ -136,10 +136,10 @@ pub fn main(init: std.process.Init) !void {
         try stdout_writer.flush();
 
         const key: Key = try input.readKey(stdin, state.program_mode != .normal);
-        // Chyba sa zobrazí do najbližšieho stlačenia klávesu, potom zas uvidíme : alebo / riadok
+        // The error is shown until the next key press, then we see the : or / line again
         active_error = null;
 
-        // Handler iba zmení stav a povie, čo treba spraviť; vedľajšie efekty sú všetky tu
+        // The handler only changes state and says what to do; all side effects happen here
         const action = handleKey(key, &state, &view, gpa) catch |err| {
             active_error = err;
             continue;
@@ -147,7 +147,7 @@ pub fn main(init: std.process.Init) !void {
         switch (action) {
             .none => {},
             .quit => break,
-            // Vrátime terminál do normálu, zastavíme sa (fg nás prebudí) a znova prejdeme do RAW
+            // Return the terminal to normal, stop (fg wakes us up) and go back to RAW
             .suspend_process => {
                 terminal.leaveRaw();
                 try posix.raise(.TSTP);
@@ -156,7 +156,7 @@ pub fn main(init: std.process.Init) !void {
             .open_file => |item| openFile(io, terminal, stdout, stdin, frame_allocator, &state, item) catch |err| {
                 active_error = err;
             },
-            // Napr. alias na neexistujúci adresár – chybu ukážeme, ostaneme v alias móde
+            // E.g. an alias to a nonexistent directory – show the error, stay in alias mode
             .jump_to_alias => |alias| jumpToAlias(alias, &state, gpa, io) catch |err| {
                 active_error = err;
             },
@@ -170,7 +170,7 @@ pub fn main(init: std.process.Init) !void {
                 runShell(io, terminal, stdout, stdin, state.current_dir, &.{ shell, "-c", expanded }) catch |err| {
                     active_error = err;
                 };
-                // Príkaz mohol súbory vytvoriť, zmazať či premenovať – načítame adresár znova
+                // The command may have created, deleted or renamed files – reload the directory
                 state.rememberSelected(&view);
                 state.dir_changed = true;
             },
@@ -179,7 +179,7 @@ pub fn main(init: std.process.Init) !void {
                 runShell(io, terminal, stdout, stdin, state.current_dir, &.{shell}) catch |err| {
                     active_error = err;
                 };
-                // V shelli sa mohlo v adresári čokoľvek zmeniť
+                // Anything in the directory could have changed in the shell
                 state.rememberSelected(&view);
                 state.dir_changed = true;
             },
@@ -188,21 +188,21 @@ pub fn main(init: std.process.Init) !void {
                 bulkRename(io, terminal, stdout, stdin, frame_allocator, tmp_dir, state.current_dir, view.visible) catch |err| {
                     active_error = err;
                 };
-                // Aj po chybe mohla časť súborov zmeniť meno
+                // Even after an error some files may have been renamed
                 state.rememberSelected(&view);
                 state.dir_changed = true;
             },
         }
     }
 
-    // cd-on-exit: ak je nastavená ZNAVI_LASTDIR, zapíšeme do toho súboru posledný adresár,
-    // aby shellová funkcia vedela po skončení spraviť cd
+    // cd-on-exit: if ZNAVI_LASTDIR is set, write the last directory into that file,
+    // so a shell function can cd there after we exit
     if (init.environ_map.get("ZNAVI_LASTDIR")) |lastdir_path| {
         try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = lastdir_path, .data = state.current_dir });
     }
 }
 
-// Otvorenie súboru: text v $VISUAL/$EDITOR, ostatné cez xdg-open (odpojené)
+// Opening a file: text in $VISUAL/$EDITOR, everything else via xdg-open (detached)
 fn openFile(
     io: std.Io,
     terminal: Terminal,
@@ -218,20 +218,20 @@ fn openFile(
     });
     const full_path = try std.fs.path.join(frame_allocator, &.{ state.current_dir, file_full_name });
 
-    // statFile ide cez symlink na cieľ. Otvárame len bežné súbory – na FIFO by sa zasekol
-    // už samotný open (sniff textu aj xdg-open) a znavi by sa nedalo ani ukončiť
+    // statFile follows a symlink to its target. Only open regular files – on a FIFO even the
+    // open itself would hang (text sniffing and xdg-open alike) and znavi couldn't even be quit
     const stat = try std.Io.Dir.cwd().statFile(io, full_path, .{});
     if (stat.kind != .file) return error.NotARegularFile;
 
     if (!fs.isTextFile(io, full_path)) return openDetached(io, state.current_dir, full_path);
 
-    // Text otvoríme v editore v tomto termináli.
-    // Terminálový editor (vim, less...) musí dostať normálny terminál, nie náš RAW mód
+    // Open text in an editor in this terminal.
+    // A terminal editor (vim, less...) needs a normal terminal, not our RAW mode
     terminal.leaveRaw();
     errdefer terminal.enterRaw() catch {};
     const term = try runEditor(io, state.current_dir, full_path);
-    // Napr. editor neexistuje (127). Pred návratom na našu obrazovku počkáme na Enter,
-    // inak by hláška programu hneď zmizla
+    // E.g. the editor doesn't exist (127). Wait for Enter before returning to our screen,
+    // otherwise the program's message would disappear immediately
     const ok = switch (term) {
         .exited => |code| code == 0,
         else => false,
@@ -247,12 +247,12 @@ fn openFile(
     if (!ok) return error.OpenCommandFailed;
 }
 
-// $VISUAL, potom $EDITOR, potom vi – v tomto termináli (volať mimo RAW módu).
-// Cesta ide ako $1, takže ju netreba escapovať; $VISUAL/$EDITOR môžu mať aj argumenty.
+// $VISUAL, then $EDITOR, then vi – in this terminal (call outside RAW mode).
+// The path goes in as $1, so it needs no escaping; $VISUAL/$EDITOR may include arguments.
 fn runEditor(io: std.Io, cwd: []const u8, path: []const u8) !std.process.Child.Term {
     var child = try std.process.spawn(io, .{
         .argv = &.{ "/bin/sh", "-c", "exec ${VISUAL:-${EDITOR:-vi}} \"$1\"", "znavi", path },
-        .cwd = .{ .path = cwd }, // vim :! a relatívne cesty majú platiť tu
+        .cwd = .{ .path = cwd }, // vim's :! and relative paths should apply here
         .stdin = .inherit,
         .stdout = .inherit,
         .stderr = .inherit,
@@ -260,8 +260,8 @@ fn runEditor(io: std.Io, cwd: []const u8, path: []const u8) !std.process.Child.T
     return child.wait(io);
 }
 
-// :cw – mená viditeľných súborov dáme do dočasného súboru, používateľ ich upraví v editore
-// a zmenené riadky premenujeme (rename.zig). Ak niečo nevyšlo, vypíšeme prečo a počkáme na Enter.
+// :cw – put the visible file names into a temp file, the user edits them in an editor
+// and the changed lines get renamed (rename.zig). If something fails, print why and wait for Enter.
 fn bulkRename(
     io: std.Io,
     terminal: Terminal,
@@ -272,7 +272,7 @@ fn bulkRename(
     cwd: []const u8,
     visible: []const file_entry,
 ) !void {
-    // Rovnaké poradie ako na obrazovke, bez ".."; meno s novým riadkom sa do súboru nedá zapísať
+    // Same order as on screen, without ".."; a name containing a newline can't be written to the file
     var sources: std.ArrayList([]const u8) = .empty;
     var list: std.ArrayList(u8) = .empty;
     for (visible) |item| {
@@ -284,7 +284,7 @@ fn bulkRename(
     }
     if (sources.items.len == 0) return error.NothingToRename;
 
-    // Náhodné meno a exclusive, aby sme neprepísali cudzí súbor v zdieľanom /tmp
+    // Random name and exclusive, so we don't overwrite someone else's file in a shared /tmp
     var random_bytes: [8]u8 = undefined;
     io.random(&random_bytes);
     const list_path = try std.fmt.allocPrint(allocator, "{s}/znavi-cw.{x}", .{ tmp_dir, &random_bytes });
@@ -298,7 +298,7 @@ fn bulkRename(
     terminal.leaveRaw();
     defer terminal.enterRaw() catch {};
 
-    // Editor ukončený s chybou (vim :cq) = zrušenie, nič nepremenujeme
+    // Editor exited with an error (vim :cq) = cancel, rename nothing
     const term = try runEditor(io, cwd, list_path);
     const ok = switch (term) {
         .exited => |code| code == 0,
@@ -325,12 +325,12 @@ fn bulkRename(
     }
 }
 
-// GUI program spustíme mimo nášho terminálu: nová session bez riadiaceho terminálu,
-// stdio na /dev/null. Ctrl+Z/Ctrl+C v znavi ho nezasiahne a znavi nečaká na jeho zatvorenie.
-// Linux: setsid(1) z util-linux, FreeBSD: daemon(8) zo základného systému. setsid skúšame
-// prvý, lebo na Linuxe môže byť nainštalovaný iný `daemon`, kde -f znamená foreground.
-// Chybu samotného xdg-open (napr. nenašiel aplikáciu) po odpojení už nevidíme; overíme
-// aspoň, že existuje.
+// Run the GUI program outside our terminal: a new session without a controlling terminal,
+// stdio on /dev/null. Ctrl+Z/Ctrl+C in znavi won't hit it and znavi doesn't wait for it to close.
+// Linux: setsid(1) from util-linux, FreeBSD: daemon(8) from the base system. setsid is tried
+// first, because on Linux a different `daemon` may be installed, where -f means foreground.
+// An error from xdg-open itself (e.g. no application found) is invisible after detaching; we at
+// least check that it exists.
 fn openDetached(io: std.Io, cwd: []const u8, path: []const u8) !void {
     var child = try std.process.spawn(io, .{
         .argv = &.{
@@ -348,7 +348,7 @@ fn openDetached(io: std.Io, cwd: []const u8, path: []const u8) !void {
         .stdout = .ignore,
         .stderr = .ignore,
     });
-    // setsid/daemon sa po odpojení hneď ukončí; počkáme naň, aby nezostal zombie
+    // setsid/daemon exits right after detaching; wait for it so it doesn't stay a zombie
     const term = try child.wait(io);
     switch (term) {
         .exited => |code| switch (code) {
@@ -360,8 +360,8 @@ fn openDetached(io: std.Io, cwd: []const u8, path: []const u8) !void {
     }
 }
 
-// :!príkaz (argv = shell -c príkaz) alebo :sh (argv = iba shell) – spustí sa v aktuálnom
-// adresári na normálnom termináli (ako vim); po :! počká na Enter, aby bolo vidno výstup
+// :!command (argv = shell -c command) or :sh (argv = just the shell) – runs in the current
+// directory on the normal terminal (like vim); after :! waits for Enter so the output stays visible
 fn runShell(
     io: std.Io,
     terminal: Terminal,
@@ -399,7 +399,7 @@ fn runShell(
     // wait4 is retried on EINTR, so the handler doesn't break waiting
     const term = try child.wait(io);
 
-    // Interaktívny :sh – exit kód je iba z posledného príkazu v ňom, na Enter nečakáme
+    // Interactive :sh – the exit code is only from the last command in it, don't wait for Enter
     if (argv.len == 1) return;
     switch (term) {
         .exited => |code| if (code != 0) try stdout.print("\nshell returned {d}", .{code}),
@@ -410,24 +410,24 @@ fn runShell(
 
 fn noopSignalHandler(_: posix.SIG) callconv(.c) void {}
 
-// Volať mimo RAW módu
+// Call outside RAW mode
 fn waitForEnter(stdout: *std.Io.Writer, stdin: *std.Io.Reader) !void {
     try stdout.writeAll("\nPress Enter to continue");
     try stdout.flush();
-    // Terminál je v normálnom (riadkovom) móde, takže prvý bajt príde až po Enter;
-    // zvyšok riadku zahodíme (enterRaw s .FLUSH zahodí aj to, čo ešte nebolo prečítané)
+    // The terminal is in normal (line) mode, so the first byte arrives only after Enter;
+    // discard the rest of the line (enterRaw with .FLUSH also discards anything not yet read)
     _ = stdin.takeByte() catch {};
     stdin.toss(stdin.buffered().len);
 }
 
-// Prejde do adresára aliasu a vráti sa do normal módu
+// Goes to the alias's directory and returns to normal mode
 fn jumpToAlias(alias: Alias, state: *ProgramState, gpa: std.mem.Allocator, io: std.Io) !void {
-    // Skutočná cesta: /home/... -> /usr/home/..., bez lomky na konci
+    // The real path: /home/... -> /usr/home/..., without a trailing slash
     var path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const path_len = try std.Io.Dir.realPathFileAbsolute(io, alias.path, &path_buf);
     state.setCurrentDir(gpa, try gpa.dupe(u8, path_buf[0..path_len]));
 
-    // Skok inam – stará cesta vpred ani vyhľadávanie už neplatia
+    // Jumping elsewhere – the old forward path and the search no longer apply
     state.clearForwardHistory(gpa);
     state.search_buffer.clearRetainingCapacity();
     state.resetIndices();
@@ -435,9 +435,9 @@ fn jumpToAlias(alias: Alias, state: *ProgramState, gpa: std.mem.Allocator, io: s
     state.program_mode = .normal;
 }
 
-// ===================== Testy (zig build test) =====================
+// ===================== Tests (zig build test) =====================
 
-// Testy z FileEntry.zig (triedenie, formátovanie) sa spustia spolu s týmito
+// Tests from FileEntry.zig (sorting, formatting) run together with these
 test {
     _ = file_entry;
     _ = render;

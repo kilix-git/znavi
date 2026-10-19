@@ -1,4 +1,4 @@
-// Kreslenie obrazoviek (zoznam súborov, aliasy, nápoveda) a pomocné funkcie na šírku textu
+// Drawing the screens (file list, aliases, help) and helpers for text width
 const std = @import("std");
 const file_entry = @import("FileEntry.zig");
 const Terminal = @import("Terminal.zig");
@@ -22,27 +22,27 @@ pub fn drawScreen(
         .alias => "[A]",
         .help => "[?]",
     };
-    // Lokálny buffer na minimalizáciu syscallov
+    // Local buffer to minimize syscalls
     var raw_buf: [131_072]u8 = undefined;
     var stream_writer = std.Io.Writer.fixed(&raw_buf);
 
-    // Napísanie aktuálneho adresára (skrátenej verzie)
+    // Write the current directory (shortened version)
     try stream_writer.print("{s}:\n", .{display_path});
 
-    // Šírky stĺpcov meriame cez celý (filtrovaný) adresár, nie iba riadky na obrazovke,
-    // aby sa stĺpce pri scrollovaní neposúvali
+    // Column widths are measured over the whole (filtered) directory, not just the rows on screen,
+    // so the columns don't shift while scrolling
     const longestFileNameLength = getLongestNameLength(view.visible);
 
-    // Začiatok okna vo visible, aby čísla riadkov zodpovedali príkazu :<číslo>
+    // Start of the window in visible, so the row numbers match the :<number> command
     const window_start = view.window_start;
-    // Šírka čísla podľa najväčšieho indexu (minimálne 2 znaky)
+    // Width of the number based on the largest index (at least 2 characters)
     var index_width: usize = 2;
     var max_index = view.visible.len -| 1;
     while (max_index >= 100) : (max_index /= 10) index_width += 1;
 
-    // Šírka stĺpca s menom: najdlhšie meno, ale najviac toľko, koľko ostane z riadku
-    // po ukazovateli, čísle a zapnutých stĺpcoch ("   " + šírka hodnoty), aby sa riadok nezalomil
-    // Stĺpce vlastníka a skupiny sú široké ako najdlhšie meno na obrazovke
+    // Width of the name column: the longest name, but at most what's left of the row
+    // after the pointer, the number and the enabled columns ("   " + value width), so the row doesn't wrap
+    // The owner and group columns are as wide as the longest name on screen
     var owner_width: usize = 0;
     var group_width: usize = 0;
     for (view.visible) |file| {
@@ -55,7 +55,7 @@ pub fn drawScreen(
     if (state.viewing.group) reserved += 3 + group_width;
     if (state.viewing.date) reserved += 3 + 19;
     if (state.viewing.size) reserved += 3 + 10;
-    // Stĺpec aliasov je široký ako najdlhšie meno aliasu
+    // The alias column is as wide as the longest alias name
     var alias_width: usize = 0;
     if (state.viewing.aliases) {
         for (state.aliases) |alias| alias_width = @max(alias_width, displayWidth(alias.name));
@@ -75,11 +75,11 @@ pub fn drawScreen(
         const italic_end = if (file.is_symlink) "\x1b[23m" else "";
         const slash = if (file.is_dir) "/" else "";
 
-        // Vytlačíme základný riadok súboru
+        // Print the basic file row
         try stream_writer.writeAll(pointer);
         try stream_writer.print("{[value]d:>[width]} ", .{ .value = idx, .width = index_width });
 
-        // Celé meno (meno + prípona + lomka); ak je dlhšie ako stĺpec, odrežeme ho a dáme "…"
+        // The full name (name + extension + slash); if it's longer than the column, cut it and add "…"
         var full_name_buf: [std.fs.max_path_bytes + 1]u8 = undefined;
         const full_name = std.fmt.bufPrint(&full_name_buf, "{s}{s}{s}", .{ file.name, file.extension, slash }) catch file.name;
         var shown_name = full_name;
@@ -90,7 +90,7 @@ pub fn drawScreen(
         }
         try stream_writer.print("{s}{s}{s}{s}", .{ italic_start, shown_name, ellipsis, italic_end });
 
-        // Efektívny padding
+        // Effective padding
         const current_len = displayWidth(shown_name) + @as(usize, if (ellipsis.len > 0) 1 else 0);
         const show_aliases = state.viewing.aliases and alias_width > 0;
         if (show_aliases or state.viewing.size or state.viewing.date or state.viewing.permissions or
@@ -102,13 +102,13 @@ pub fn drawScreen(
             }
         }
 
-        // Alias, ktorý vedie do tohto adresára (prázdne miesto, ak žiadny nie je)
+        // The alias that leads to this directory (blank if there is none)
         if (show_aliases) {
             try stream_writer.writeAll("   ");
             try writePadded(&stream_writer, state.aliasFor(file) orelse "", alias_width);
         }
 
-        // Fixné medzery a volania formátovania prístupom cez state.viewing
+        // Fixed spacing and formatting calls, toggled via state.viewing
         if (state.viewing.permissions) {
             var perm_buf: [10]u8 = undefined;
             const formatted_perms = file.getFormattedPermissions(&perm_buf);
@@ -116,7 +116,7 @@ pub fn drawScreen(
             try stream_writer.writeAll(formatted_perms);
         }
 
-        // Vlastník a skupina zarovnané doľava, ako v ls -l
+        // Owner and group aligned left, like in ls -l
         if (state.viewing.owner) {
             try stream_writer.writeAll("   ");
             try writePadded(&stream_writer, file.owner_name, owner_width);
@@ -147,7 +147,7 @@ pub fn drawScreen(
 
     try stream_writer.writeAll("\n");
 
-    // Vykreslenie stavového riadku na základe módu
+    // Draw the status line depending on the mode
     if (active_error) |err| {
         try stream_writer.print("\x1B[31mError: {s}\x1B[0m\n", .{@errorName(err)});
     } else if (state.program_mode == .command) {
@@ -160,7 +160,7 @@ pub fn drawScreen(
         try stream_writer.print("{s}\n", .{mode_string});
     }
 
-    // Finálny zápis na obrazovku
+    // Final write to the screen
     try writeFrame(stdout, stream_writer.buffered());
 }
 
@@ -181,9 +181,9 @@ pub fn drawAliasScreen(
         try stream_writer.writeAll(if (state.aliases.len == 0) "  (no cd aliases in ~/.aliases)\n" else "  (no match)\n");
     }
 
-    // Riadky na zoznam: bez hlavičky, prázdneho riadku a stavového riadku
+    // Rows for the list: without the header, the blank line and the status line
     const rows_available = @max(@as(usize, terminal_size.rows) -| 3, 1);
-    // Okno posúvame tak, aby vybraný alias bol vždy vidieť
+    // Move the window so the selected alias is always visible
     const start = if (state.alias_index >= rows_available) state.alias_index - rows_available + 1 else 0;
     const end = @min(start + rows_available, matches.len);
 
@@ -197,7 +197,7 @@ pub fn drawAliasScreen(
         try writePadded(&stream_writer, alias.name, name_width);
         try stream_writer.writeAll("  ");
 
-        // Cestu odrežeme, aby sa riadok nezalomil (rovnako ako dlhé mená súborov)
+        // Cut the path so the row doesn't wrap (just like long file names)
         const room = @max(@as(usize, terminal_size.cols) -| (1 + name_width + 2), 1);
         if (displayWidth(alias.path) > room) {
             try stream_writer.print("{s}…", .{truncateToWidth(alias.path, room - 1)});
@@ -218,19 +218,19 @@ pub fn drawAliasScreen(
     try writeFrame(stdout, stream_writer.buffered());
 }
 
-// Riadky na jednu stranu nápovedy: posledný riadok necháme na pätičku
+// Rows per help page: the last row is left for the footer
 fn helpPageRows(rows: u16) usize {
     return @max(rows, 2) - 1;
 }
 
-// Počet strán nápovedy pri danej výške terminálu
+// Number of help pages at the given terminal height
 pub fn helpPageCount(rows: u16) usize {
     const page_rows = helpPageRows(rows);
     const total_lines = std.mem.count(u8, help_text, "\n") + 1;
     return (total_lines + page_rows - 1) / page_rows;
 }
 
-// Jedna strana nápovedy (page od 0); listovanie rieši handleHelpMode
+// One help page (page from 0); paging is handled by handleHelpMode
 pub fn drawHelpScreen(stdout: *std.Io.Writer, page: usize, rows: u16) !void {
     const page_rows = helpPageRows(rows);
     const total_pages = helpPageCount(rows);
@@ -239,14 +239,14 @@ pub fn drawHelpScreen(stdout: *std.Io.Writer, page: usize, rows: u16) !void {
     var stream_writer: std.Io.Writer = .fixed(&raw_buf);
 
     var lines = std.mem.splitScalar(u8, help_text, '\n');
-    // Preskočíme riadky predchádzajúcich strán
+    // Skip the rows of the previous pages
     for (0..page * page_rows) |_| _ = lines.next();
     var row: usize = 0;
     while (row < page_rows) : (row += 1) {
         const line = lines.next() orelse break;
         try stream_writer.print("{s}\n", .{line});
     }
-    // Pätička bez \n na konci, aby terminál neodroloval prvý riadok
+    // Footer without a trailing \n, so the terminal doesn't scroll off the first row
     if (page + 1 < total_pages) {
         try stream_writer.print("-- {d}/{d}: any key = next page, q = close --", .{ page + 1, total_pages });
     } else {
@@ -255,7 +255,7 @@ pub fn drawHelpScreen(stdout: *std.Io.Writer, page: usize, rows: u16) !void {
     try writeFrame(stdout, stream_writer.buffered());
 }
 
-// Text nápovedy; drawHelpScreen ho rozdelí na strany podľa výšky terminálu
+// Help text; drawHelpScreen splits it into pages based on the terminal height
 const help_text =
     \\=== ZNAVI FILE BROWSER HELP ===
     \\
@@ -287,7 +287,7 @@ const help_text =
     \\  Esc       - Return to Normal Mode
 ;
 
-// Riadky nápovedy pre príkazy, vygenerované pri kompilácii z tabuľky commands
+// Help rows for the commands, generated at compile time from the commands table
 const command_help = blk: {
     var text: []const u8 = "";
     for (commands) |cmd| {
@@ -296,11 +296,10 @@ const command_help = blk: {
     break :blk text;
 };
 
-// Počet stĺpcov na obrazovke: jeden znak = jeden stĺpec (široké CJK/emoji ignorujeme)
-// Pošle hotový frame na terminál bez mazania celej obrazovky (\x1B[2J pri rýchlom scrollovaní bliká):
-// kurzor domov, každý riadok zmažeme (\x1B[K) a hneď prepíšeme, na konci zmažeme zvyšok obrazovky (\x1B[J).
-// \x1B[K dávame na začiatok riadku, nie na koniec: riadok presne na šírku terminálu nechá kurzor
-// v poslednom stĺpci a \x1B[K by tam zmazal posledný znak
+// Sends a finished frame to the terminal without clearing the whole screen (\x1B[2J flickers when scrolling fast):
+// cursor home, each line is cleared (\x1B[K) and rewritten right away, at the end the rest of the screen is cleared (\x1B[J).
+// \x1B[K goes at the start of a line, not the end: a line exactly as wide as the terminal leaves the cursor
+// in the last column and \x1B[K there would erase the last character
 fn writeFrame(stdout: *std.Io.Writer, frame: []const u8) !void {
     try stdout.writeAll("\x1B[H");
     var lines = std.mem.splitScalar(u8, frame, '\n');
@@ -314,15 +313,15 @@ fn writeFrame(stdout: *std.Io.Writer, frame: []const u8) !void {
     try stdout.writeAll("\x1B[J");
 }
 
-// Fish-style skracovanie: /usr/home/matej/dlhy/src -> /u/h/m/dlhy/src
-// Adresáre zľava skracujeme na prvé písmeno (skryté na ".c"), iba kým sa cesta nezmestí.
-// Posledný adresár ostáva celý; ak sa nezmestí ani tak, ukážeme koniec cesty.
+// Fish-style shortening: /usr/home/matej/long/src -> /u/h/m/long/src
+// Directories are shortened from the left to their first letter (hidden ones to ".c"), only until the path fits.
+// The last directory stays whole; if it still doesn't fit, we show the end of the path.
 pub fn shortenPath(path: []const u8, cols: u16, buf: []u8) ![]const u8 {
-    // Rezerva pre dvojbodku a nový riadok na konci riadku
+    // Room for the colon and the newline at the end of the row
     const max_allowed: usize = if (cols > 2) cols - 2 else cols;
     if (displayWidth(path) <= max_allowed) return path;
 
-    // 1. Koľko adresárov zľava treba skrátiť (posledný nikdy)
+    // 1. How many directories from the left need shortening (never the last one)
     const component_count = std.mem.count(u8, std.mem.trim(u8, path, "/"), "/") + 1;
     var abbreviate_count: usize = 0;
     var shown_len = displayWidth(path);
@@ -333,7 +332,7 @@ pub fn shortenPath(path: []const u8, cols: u16, buf: []u8) ![]const u8 {
         abbreviate_count += 1;
     }
 
-    // 2. Poskladáme cestu: prvých abbreviate_count adresárov skrátených, zvyšok celý
+    // 2. Build the path: the first abbreviate_count directories shortened, the rest whole
     var w: std.Io.Writer = .fixed(buf);
     it.reset();
     var index: usize = 0;
@@ -345,24 +344,25 @@ pub fn shortenPath(path: []const u8, cols: u16, buf: []u8) ![]const u8 {
     const shortened_width = displayWidth(shortened);
     if (shortened_width <= max_allowed) return shortened;
 
-    // 3. Extrémne úzky terminál – vrátime len koniec cesty: preskočíme toľko znakov
-    // zo začiatku, koľko je navyše (celé znaky, nie bajty)
+    // 3. Extremely narrow terminal – return just the end of the path: skip as many characters
+    // from the start as there are too many (whole characters, not bytes)
     const skip = truncateToWidth(shortened, shortened_width - max_allowed);
     return shortened[skip.len..];
 }
 
-// "matej" -> "m", ".config" -> ".c"; celý prvý UTF-8 znak (napr. "š"), nie iba jeho prvý bajt
+// "matej" -> "m", ".config" -> ".c"; the whole first UTF-8 character (e.g. "š"), not just its first byte
 fn abbreviateComponent(component: []const u8) []const u8 {
     const first = if (component.len > 1 and component[0] == '.') @as(usize, 1) else 0;
     const char_len = std.unicode.utf8ByteSequenceLength(component[first]) catch 1;
     return component[0..@min(first + char_len, component.len)];
 }
 
+// Number of columns on screen: one character = one column (wide CJK/emoji are ignored)
 pub fn displayWidth(s: []const u8) usize {
-    return std.unicode.utf8CountCodepoints(s) catch s.len; // neplatné UTF-8: bajty
+    return std.unicode.utf8CountCodepoints(s) catch s.len; // invalid UTF-8: bytes
 }
 
-// Najdlhší začiatok s, ktorý sa zmestí do max_cols stĺpcov (nereže v strede znaku)
+// The longest prefix of s that fits into max_cols columns (doesn't cut in the middle of a character)
 pub fn truncateToWidth(s: []const u8, max_cols: usize) []const u8 {
     var i: usize = 0;
     var used: usize = 0;
@@ -372,8 +372,8 @@ pub fn truncateToWidth(s: []const u8, max_cols: usize) []const u8 {
     return s[0..@min(i, s.len)];
 }
 
-// Vypíše s a doplní medzerami na width stĺpcov. Zigové {s:<width} počíta bajty,
-// takže meno s diakritikou by dostalo menej medzier a ďalší stĺpec by sa posunul
+// Prints s and pads it with spaces to width columns. Zig's {s:<width} counts bytes,
+// so a name with diacritics would get fewer spaces and the next column would shift
 fn writePadded(writer: *std.Io.Writer, s: []const u8, width: usize) !void {
     try writer.writeAll(s);
     try writer.splatByteAll(' ', width -| displayWidth(s));
@@ -385,7 +385,7 @@ fn getLongestNameLength(files: []const file_entry) usize {
     for (files) |file| {
         const slash_len: usize = if (file.is_dir) 1 else 0;
         const current_len = displayWidth(file.name) + displayWidth(file.extension) + slash_len;
-        // std.math.max vráti vyššiu z dvoch hodnôt
+        // std.math.max returns the larger of two values
         longest_len = @max(longest_len, current_len);
     }
     return longest_len;
@@ -397,7 +397,7 @@ test "displayWidth counts characters, not bytes" {
     try std.testing.expectEqual(@as(usize, 5), displayWidth("johny"));
     try std.testing.expectEqual(@as(usize, 5), displayWidth("hello"));
     try std.testing.expectEqual(@as(usize, 0), displayWidth(""));
-    // failed UTF-8: counting bytes
+    // invalid UTF-8: counting bytes
     try std.testing.expectEqual(@as(usize, 2), displayWidth("\xff\xfe"));
 }
 

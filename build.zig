@@ -85,7 +85,7 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
-    // Testy z test blokov main.zig (a cez jeho `test {}` blok zo všetkých ostatných súborov)
+    // Tests from main.zig's test blocks (and, through its `test {}` block, from all the other files)
     const exe_tests = b.addTest(.{
         .root_module = exe.root_module,
     });

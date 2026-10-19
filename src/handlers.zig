@@ -1,5 +1,5 @@
-// Spracovanie klávesov v jednotlivých módoch: iba menia stav a vracajú Action,
-// vedľajšie efekty (otvorenie súboru, nápoveda, skok na alias...) robí main
+// Key handling in the individual modes: handlers only change state and return an Action,
+// side effects (opening a file, help, jumping to an alias...) are done by main
 const std = @import("std");
 const file_entry = @import("FileEntry.zig");
 const Key = @import("input.zig").Key;
@@ -18,7 +18,7 @@ const testState = state_zig.testState;
 const testEntry = state_zig.testEntry;
 
 pub fn handleKey(key: Key, state: *ProgramState, view: *const View, gpa: std.mem.Allocator) !Action {
-    // Ctrl+Z funguje v každom režime
+    // Ctrl+Z works in every mode
     if (key == .ctrl_z) return .suspend_process;
     return switch (state.program_mode) {
         .normal => handleNormalMode(key, state, view, gpa),
@@ -29,7 +29,7 @@ pub fn handleKey(key: Key, state: *ProgramState, view: *const View, gpa: std.mem
     };
 }
 
-// Vstup do priečinka
+// Entering a directory
 fn enterDir(state: *ProgramState, gpa: std.mem.Allocator, item: file_entry) !void {
     state.setCurrentDir(gpa, try std.fs.path.resolve(gpa, &.{
         state.current_dir,
@@ -40,7 +40,7 @@ fn enterDir(state: *ProgramState, gpa: std.mem.Allocator, item: file_entry) !voi
 }
 
 fn handleNormalMode(key: Key, state: *ProgramState, view: *const View, gpa: std.mem.Allocator) anyerror!Action {
-    // Číslice zbierame do count (0 iba ak už nejaké číslo rozpisujeme), strop 9999
+    // Collect digits into count (0 only if we're already typing a number), capped at 9999
     if (key == .char) {
         const c = key.char;
         if ((c >= '1' and c <= '9') or (c == '0' and state.count > 0)) {
@@ -48,7 +48,7 @@ fn handleNormalMode(key: Key, state: *ProgramState, view: *const View, gpa: std.
             return .none;
         }
     }
-    // Akýkoľvek iný kláves count spotrebuje (použijú ho iba j/k)
+    // Any other key consumes count (only j/k use it)
     const count = @max(state.count, 1);
     state.count = 0;
 
@@ -72,13 +72,13 @@ fn handleNormalMode(key: Key, state: *ProgramState, view: *const View, gpa: std.
         },
         .up => {
             if (state.global_index > 0) {
-                // 5k: o count riadkov hore, najďalej na prvú položku
+                // 5k: count rows up, at most to the first item
                 state.global_index -|= count;
             }
         },
         .down => {
             if (view.visible.len > 0 and state.global_index + 1 < view.visible.len) {
-                // 5j: o count riadkov dole, najďalej na poslednú položku
+                // 5j: count rows down, at most to the last item
                 state.global_index = @min(state.global_index + count, view.visible.len - 1);
             }
         },
@@ -91,11 +91,11 @@ fn handleNormalMode(key: Key, state: *ProgramState, view: *const View, gpa: std.
 
                     const fwd = state.history_forward.items;
                     if (fwd.len > 0 and std.mem.eql(u8, fwd[fwd.len - 1], item.name)) {
-                        // Ideme tou istou cestou späť dole – kurzor dáme na ďalšiu úroveň
+                        // Going back down the same path – put the cursor on the next level
                         gpa.free(state.history_forward.pop().?);
                         state.pending_cursor = .from_history;
                     } else {
-                        // Nová vetva, stará cesta vpred už neplatí
+                        // A new branch, the old forward path no longer applies
                         state.clearForwardHistory(gpa);
                     }
                 } else {
@@ -104,20 +104,20 @@ fn handleNormalMode(key: Key, state: *ProgramState, view: *const View, gpa: std.
             }
         },
         .left => {
-            // Vypočítame rodičovský adresár
+            // Compute the parent directory
             const parent_dir = try std.fs.path.resolve(gpa, &.{
                 state.current_dir,
                 "..",
             });
-            // Na "/" je rodič zas "/" – nie je kam ísť, nič neukladáme ani nenačítavame
+            // On "/" the parent is "/" again – nowhere to go, nothing to save or reload
             if (std.mem.eql(u8, parent_dir, state.current_dir)) {
                 gpa.free(parent_dir);
                 return .none;
             }
             errdefer gpa.free(parent_dir);
 
-            // Ak ideme hore, zistíme názov priečinka, z ktorého sme prišli,
-            // a uložíme ho do histórie FORWARD, aby sme vedeli ísť znova dole
+            // When going up, find out the name of the directory we came from
+            // and save it to the FORWARD history, so we can go back down again
             try pushHistory(&state.history_forward, gpa, std.fs.path.basename(state.current_dir));
 
             state.setCurrentDir(gpa, parent_dir);
@@ -158,12 +158,12 @@ fn handleNormalMode(key: Key, state: *ProgramState, view: *const View, gpa: std.
             },
             '\r', '\n' => {
                 if (view.visible.len > 0) {
-                    // AK JE TO ADRESÁR: Umelo vyvoláme vetvu .right (šípku vpravo)
-                    // Tým zaistíme, že Enter prevezme celú logiku, históriu aj správu pamäte z klávesy 'l'
+                    // IF IT'S A DIRECTORY: artificially trigger the .right branch (right arrow)
+                    // That way Enter takes over all the logic, history and memory management of the 'l' key
                     if (view.visible[state.global_index].is_dir) {
                         return handleNormalMode(.right, state, view, gpa);
                     } else {
-                        // Ak je to súbor, iba ho otvoríme (editor alebo xdg-open)
+                        // If it's a file, just open it (editor or xdg-open)
                         return .{ .open_file = view.visible[state.global_index] };
                     }
                 }
@@ -180,15 +180,15 @@ fn handleCommandMode(key: Key, state: *ProgramState, view: *const View, gpa: std
         .char => |c| switch (c) {
             '\r', '\n' => {
                 const command = state.command_buffer.items;
-                // Po Enter sa vraciame do normal módu (príkaz :a ho prepne ďalej na alias mód)
+                // After Enter we return to normal mode (the :a command switches on to alias mode)
                 state.program_mode = .normal;
 
                 for (commands) |cmd| {
                     if (std.mem.eql(u8, command, cmd.name)) return cmd.run(state, view);
                 }
-                // :!ls – shellový príkaz spustí main (prázdne :! nerobí nič)
+                // :!ls – the shell command is run by main (an empty :! does nothing)
                 if (command.len > 1 and command[0] == '!') return .{ .run_shell = command[1..] };
-                // :<number> – skok na index
+                // :<number> – jump to an index
                 if (std.fmt.parseInt(usize, command, 10) catch null) |target_index| {
                     if (target_index < view.visible.len) {
                         state.global_index = target_index;
@@ -258,7 +258,7 @@ fn handleAliasMode(key: Key, state: *ProgramState, view: *const View, gpa: std.m
             32...126 => {
                 try state.alias_buffer.append(gpa, c);
                 state.alias_index = 0;
-                // Ostal jediný alias – skočíme hneď, bez Enter
+                // Only one alias left – jump right away, without Enter
                 if (cd_aliases.singleAliasMatch(state.aliases, state.alias_buffer.items)) |alias| return .{ .jump_to_alias = alias };
             },
             else => {},
@@ -282,8 +282,8 @@ fn handleAliasMode(key: Key, state: *ProgramState, view: *const View, gpa: std.m
     return .none;
 }
 
-// Nápoveda: q alebo Esc ju zatvorí, iný kláves = ďalšia strana (na poslednej zatvorí).
-// Ctrl+C (.quit) a Ctrl+Z fungujú ako všade inde
+// Help: q or Esc closes it, any other key = next page (closes on the last one).
+// Ctrl+C (.quit) and Ctrl+Z work like everywhere else
 fn handleHelpMode(key: Key, state: *ProgramState, view: *const View) Action {
     switch (key) {
         .quit => return .quit,
@@ -301,8 +301,8 @@ fn handleHelpMode(key: Key, state: *ProgramState, view: *const View) Action {
     return .none;
 }
 
-// :!príkaz: % nahradí menom vybraného súboru (v apostrofoch, aby prežili medzery
-// aj špeciálne znaky), \% je obyčajné %. Bez vybraného súboru je % chyba.
+// :!command: % is replaced with the selected file's name (in single quotes, so spaces
+// and special characters survive), \% is a plain %. Without a selected file % is an error.
 pub fn expandShellCommand(allocator: std.mem.Allocator, command: []const u8, selected: ?file_entry) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
@@ -314,7 +314,7 @@ pub fn expandShellCommand(allocator: std.mem.Allocator, command: []const u8, sel
             i += 1;
         } else if (c == '%') {
             const file = selected orelse return error.NoFileSelected;
-            // 'meno' – apostrof v mene zapíšeme ako '\'' (ukončí, escapuje, znova otvorí)
+            // 'name' – a single quote in the name is written as '\'' (closes, escapes, reopens)
             try out.append(allocator, '\'');
             for ([_][]const u8{ file.name, file.extension }) |part| {
                 for (part) |ch| {
@@ -329,16 +329,16 @@ pub fn expandShellCommand(allocator: std.mem.Allocator, command: []const u8, sel
     return out.toOwnedSlice(allocator);
 }
 
-// ===================== Testy =====================
+// ===================== Tests =====================
 
-// Pošle klávesy postupne do handleKey, vráti akciu posledného
+// Feeds keys to handleKey one by one, returns the action of the last one
 fn feedKeys(state: *ProgramState, view: *const View, keys: []const Key) !Action {
     var action: Action = .none;
     for (keys) |key| action = try handleKey(key, state, view, std.testing.allocator);
     return action;
 }
 
-test "count prefix: 5j a 3k" {
+test "count prefix: 5j and 3k" {
     var state = try testState("/tmp");
     defer state.deinit(std.testing.allocator);
     var items: [10]file_entry = undefined;
@@ -349,15 +349,15 @@ test "count prefix: 5j a 3k" {
     try std.testing.expectEqual(@as(usize, 5), state.global_index);
     _ = try feedKeys(&state, &view, &.{ .{ .char = '3' }, .up });
     try std.testing.expectEqual(@as(usize, 2), state.global_index);
-    // Ďalej ako na koniec nejdeme
+    // We don't go past the end
     _ = try feedKeys(&state, &view, &.{ .{ .char = '9' }, .{ .char = '9' }, .down });
     try std.testing.expectEqual(@as(usize, 9), state.global_index);
-    // Count sa minul, ďalšie j je o jeden riadok
+    // The count is used up, the next j moves one row
     _ = try feedKeys(&state, &view, &.{.up});
     try std.testing.expectEqual(@as(usize, 8), state.global_index);
 }
 
-test "Enter: súbor vráti open_file, priečinok zmení adresár" {
+test "Enter: a file returns open_file, a directory changes the directory" {
     var state = try testState("/tmp");
     defer state.deinit(std.testing.allocator);
     const items = [_]file_entry{ testEntry("sub", true, 0), testEntry("notes.txt", false, 10) };
@@ -374,26 +374,26 @@ test "Enter: súbor vráti open_file, priečinok zmení adresár" {
     try std.testing.expect(state.dir_changed);
 }
 
-test "h a potom l vráti kurzor na priečinok, z ktorého sme prišli" {
+test "h and then l puts the cursor back on the directory we came from" {
     var state = try testState("/tmp/sub");
     defer state.deinit(std.testing.allocator);
 
     _ = try feedKeys(&state, &.{}, &.{.left});
     try std.testing.expectEqualStrings("/tmp", state.current_dir);
 
-    // Nový frame: obsah /tmp, kurzor na "sub"
+    // New frame: contents of /tmp, cursor on "sub"
     const parent = [_]file_entry{ testEntry("a", true, 0), testEntry("b", true, 0), testEntry("sub", true, 0) };
     const view: View = .{ .visible = &parent };
     applyPendingCursor(&state, view.visible);
     try std.testing.expectEqual(@as(usize, 2), state.global_index);
 
-    // l na ten istý priečinok: späť dole a história sa spotrebuje
+    // l on the same directory: back down, and the history entry is consumed
     _ = try feedKeys(&state, &view, &.{.right});
     try std.testing.expectEqualStrings("/tmp/sub", state.current_dir);
     try std.testing.expectEqual(@as(usize, 0), state.history_forward.items.len);
 }
 
-test "príkazy :sS, :q a :<číslo>" {
+test "commands :sS, :q and :<number>" {
     var state = try testState("/tmp");
     defer state.deinit(std.testing.allocator);
     var items: [10]file_entry = undefined;
@@ -404,17 +404,17 @@ test "príkazy :sS, :q a :<číslo>" {
     try std.testing.expectEqual(Sorting.by_size_desc, state.current_sorting);
     try std.testing.expectEqual(Mode.normal, state.program_mode);
 
-    // Číslo za koncom zoznamu: posledná položka
+    // A number past the end of the list: the last item
     _ = try feedKeys(&state, &view, &.{ .command, .{ .char = '4' }, .{ .char = '2' }, .{ .char = '\r' } });
     try std.testing.expectEqual(@as(usize, 9), state.global_index);
 
-    // Neznámy príkaz nič nespraví
+    // An unknown command does nothing
     try std.testing.expectEqual(Action.none, try feedKeys(&state, &view, &.{ .command, .{ .char = 'x' }, .{ .char = '\r' } }));
 
     try std.testing.expectEqual(Action.quit, try feedKeys(&state, &view, &.{ .command, .{ .char = 'q' }, .{ .char = '\r' } }));
 }
 
-test "alias mód skočí sám, keď ostane jediný alias" {
+test "alias mode jumps by itself when only one alias is left" {
     var state = try testState("/tmp");
     defer state.deinit(std.testing.allocator);
     const aliases = [_]Alias{
@@ -425,14 +425,14 @@ test "alias mód skočí sám, keď ostane jediný alias" {
     state.enterAliasMode();
     const view: View = .{};
 
-    // "do" sedí na oba
+    // "do" matches both
     try std.testing.expectEqual(Action.none, try feedKeys(&state, &view, &.{ .{ .char = 'd' }, .{ .char = 'o' } }));
-    // "doc" už iba na docs
+    // "doc" matches only docs
     const action = try feedKeys(&state, &view, &.{.{ .char = 'c' }});
     try std.testing.expectEqualStrings("docs", action.jump_to_alias.name);
 }
 
-test "nápoveda: listovanie, q zatvorí, Ctrl+C ukončí" {
+test "help: paging, q closes, Ctrl+C quits" {
     var state = try testState("/tmp");
     defer state.deinit(std.testing.allocator);
     const view: View = .{ .help_pages = 2 };
@@ -440,26 +440,26 @@ test "nápoveda: listovanie, q zatvorí, Ctrl+C ukončí" {
     _ = try feedKeys(&state, &view, &.{.help});
     try std.testing.expectEqual(Mode.help, state.program_mode);
     try std.testing.expectEqual(@as(usize, 0), state.help_page);
-    // Ľubovoľný kláves = ďalšia strana, na poslednej zatvorí
+    // Any key = next page, closes on the last one
     _ = try feedKeys(&state, &view, &.{.{ .char = 'x' }});
     try std.testing.expectEqual(@as(usize, 1), state.help_page);
     _ = try feedKeys(&state, &view, &.{.down});
     try std.testing.expectEqual(Mode.normal, state.program_mode);
 
-    // :? otvorí nápovedu znova od prvej strany, q ju hneď zatvorí
+    // :? opens help again from the first page, q closes it right away
     _ = try feedKeys(&state, &view, &.{ .command, .{ .char = '?' }, .{ .char = '\r' } });
     try std.testing.expectEqual(Mode.help, state.program_mode);
     try std.testing.expectEqual(@as(usize, 0), state.help_page);
     _ = try feedKeys(&state, &view, &.{.{ .char = 'q' }});
     try std.testing.expectEqual(Mode.normal, state.program_mode);
 
-    // Ctrl+C v nápovede ukončí program, Ctrl+Z ho uspí
+    // Ctrl+C in help quits the program, Ctrl+Z suspends it
     _ = try feedKeys(&state, &view, &.{.help});
     try std.testing.expectEqual(Action.quit, try feedKeys(&state, &view, &.{.quit}));
     try std.testing.expectEqual(Action.suspend_process, try feedKeys(&state, &view, &.{.ctrl_z}));
 }
 
-test ":! vráti shellový príkaz, prázdne :! nič" {
+test ":! returns the shell command, an empty :! does nothing" {
     var state = try state_zig.testState("/tmp");
     defer state.deinit(std.testing.allocator);
     const view: View = .{};
@@ -471,7 +471,7 @@ test ":! vráti shellový príkaz, prázdne :! nič" {
     try std.testing.expectEqual(Action.none, try feedKeys(&state, &view, &.{ .command, .{ .char = '!' }, .{ .char = '\r' } }));
 }
 
-test ":sh vráti interaktívny shell" {
+test ":sh returns an interactive shell" {
     var state = try state_zig.testState("/tmp");
     defer state.deinit(std.testing.allocator);
     const view: View = .{};
@@ -480,7 +480,7 @@ test ":sh vráti interaktívny shell" {
     try std.testing.expectEqual(Mode.normal, state.program_mode);
 }
 
-test ":! nahradí % menom vybraného súboru" {
+test ":! replaces % with the selected file name" {
     const allocator = std.testing.allocator;
     var file = state_zig.testEntry("my file", false, 0);
     file.extension = ".txt";
