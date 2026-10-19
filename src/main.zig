@@ -373,6 +373,22 @@ fn runShell(
     terminal.leaveRaw();
     defer terminal.enterRaw() catch {};
 
+    // Ctrl+C / Ctrl+\ sends SIGINT / SIGQUIT to the whole foreground process group,
+    // which includes znavi. Catch them with a no-op handler while the child runs so only
+    // the child dies (like system(3)). Not SIG_IGN: ignored signals are inherited
+    // across exec, so the child would ignore Ctrl+C too, while a handler is reset to default.
+    const noop: posix.Sigaction = .{
+        .handler = .{ .handler = noopSignalHandler },
+        .mask = posix.sigemptyset(),
+        .flags = 0,
+    };
+    var old_int: posix.Sigaction = undefined;
+    var old_quit: posix.Sigaction = undefined;
+    posix.sigaction(.INT, &noop, &old_int);
+    defer posix.sigaction(.INT, &old_int, null);
+    posix.sigaction(.QUIT, &noop, &old_quit);
+    defer posix.sigaction(.QUIT, &old_quit, null);
+
     var child = try std.process.spawn(io, .{
         .argv = argv,
         .cwd = .{ .path = cwd },
@@ -380,6 +396,7 @@ fn runShell(
         .stdout = .inherit,
         .stderr = .inherit,
     });
+    // wait4 is retried on EINTR, so the handler doesn't break waiting
     const term = try child.wait(io);
 
     // Interaktívny :sh – exit kód je iba z posledného príkazu v ňom, na Enter nečakáme
@@ -390,6 +407,8 @@ fn runShell(
     }
     try waitForEnter(stdout, stdin);
 }
+
+fn noopSignalHandler(_: posix.SIG) callconv(.c) void {}
 
 // Volať mimo RAW módu
 fn waitForEnter(stdout: *std.Io.Writer, stdin: *std.Io.Reader) !void {
