@@ -283,7 +283,16 @@ test "run: a name that is too long is refused up front" {
     try expectContent(tmp.dir, "b", "B");
 }
 
+fn isRoot() bool {
+    const builtin = @import("builtin");
+    if (builtin.link_libc) return std.c.geteuid() == 0;
+    if (builtin.os.tag == .linux) return std.os.linux.geteuid() == 0;
+    return false;
+}
+
 test "run: a failed rename in the second pass puts the file back" {
+    // Root ignores permission bits, so the read-only directory would not stop the rename
+    if (isRoot()) return error.SkipZigTest;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
