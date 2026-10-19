@@ -1,10 +1,9 @@
 // Drawing the screens (file list, aliases, help) and helpers for text width
 const std = @import("std");
-const file_entry = @import("FileEntry.zig");
+const FileEntry = @import("FileEntry.zig");
 const Terminal = @import("Terminal.zig");
-const state_zig = @import("state.zig");
-const ProgramState = state_zig.ProgramState;
-const View = state_zig.View;
+const ProgramState = @import("state.zig").ProgramState;
+const View = @import("state.zig").View;
 const commands = @import("commands.zig").commands;
 
 pub fn drawScreen(
@@ -31,7 +30,7 @@ pub fn drawScreen(
 
     // Column widths are measured over the whole (filtered) directory, not just the rows on screen,
     // so the columns don't shift while scrolling
-    const longestFileNameLength = getLongestNameLength(view.visible);
+    const longest_name_len = getLongestNameLength(view.visible);
 
     // Start of the window in visible, so the row numbers match the :<number> command
     const window_start = view.window_start;
@@ -61,7 +60,7 @@ pub fn drawScreen(
         for (state.aliases) |alias| alias_width = @max(alias_width, displayWidth(alias.name));
         if (alias_width > 0) reserved += 3 + alias_width;
     }
-    const name_col = @max(@min(longestFileNameLength, @as(usize, cols) -| reserved), 1);
+    const name_col = @max(@min(longest_name_len, @as(usize, cols) -| reserved), 1);
 
     for (view.window, window_start..) |file, idx| {
         const file_is_selected = (idx == state.global_index);
@@ -379,7 +378,7 @@ fn writePadded(writer: *std.Io.Writer, s: []const u8, width: usize) !void {
     try writer.splatByteAll(' ', width -| displayWidth(s));
 }
 
-fn getLongestNameLength(files: []const file_entry) usize {
+fn getLongestNameLength(files: []const FileEntry) usize {
     var longest_len: usize = 0;
 
     for (files) |file| {

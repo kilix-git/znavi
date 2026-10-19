@@ -1,10 +1,9 @@
 // command mode commands (like: :vd, :sn, ...)
 const std = @import("std");
-const state_zig = @import("state.zig");
-const ProgramState = state_zig.ProgramState;
-const View = state_zig.View;
-const Action = state_zig.Action;
-const Sorting = state_zig.Sorting;
+const ProgramState = @import("state.zig").ProgramState;
+const View = @import("state.zig").View;
+const Action = @import("state.zig").Action;
+const Sorting = @import("state.zig").Sorting;
 
 // commands for command mode (:vd, :sn, ...). the same table is used to generate :h or --help text,
 // so it's sufficient to add new commands here and it will appear in --help automagically

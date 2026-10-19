@@ -2,20 +2,22 @@
 //
 const std = @import("std");
 const posix = std.posix;
-const file_entry = @import("FileEntry.zig");
+const FileEntry = @import("FileEntry.zig");
 const Terminal = @import("Terminal.zig");
 const input = @import("input.zig");
 const Key = input.Key;
 const render = @import("render.zig");
 const fs = @import("fs.zig");
-const cd_aliases = @import("aliases.zig");
-const Alias = cd_aliases.Alias;
+const aliases = @import("aliases.zig");
+const Alias = aliases.Alias;
 const handlers = @import("handlers.zig");
 const rename = @import("rename.zig");
 const handleKey = handlers.handleKey;
-const state_zig = @import("state.zig");
-const ProgramState = state_zig.ProgramState;
-const View = state_zig.View;
+const getVisibleItems = @import("state.zig").getVisibleItems;
+const applyPendingCursor = @import("state.zig").applyPendingCursor;
+const setWindow = @import("state.zig").setWindow;
+const ProgramState = @import("state.zig").ProgramState;
+const View = @import("state.zig").View;
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io; // take the program's io interface
@@ -67,7 +69,7 @@ pub fn main(init: std.process.Init) !void {
 
     // cd aliases from ~/.aliases; if the file can't be read, we continue without aliases
     if (init.environ_map.get("HOME")) |home| {
-        state.aliases = cd_aliases.loadAliases(io, init.arena.allocator(), home) catch &.{};
+        state.aliases = aliases.loadAliases(io, init.arena.allocator(), home) catch &.{};
     }
 
     var active_error: ?anyerror = null;
@@ -113,9 +115,9 @@ pub fn main(init: std.process.Init) !void {
         }
 
         // Data for this frame; lives only until the end of the loop iteration (frame arena)
-        var view: View = .{ .visible = try state_zig.getVisibleItems(frame_allocator, &state) };
-        state_zig.applyPendingCursor(&state, view.visible);
-        state_zig.setWindow(&view, terminal_size, state.global_index);
+        var view: View = .{ .visible = try getVisibleItems(frame_allocator, &state) };
+        applyPendingCursor(&state, view.visible);
+        setWindow(&view, terminal_size, state.global_index);
 
         var dir_buf: [std.fs.max_path_bytes]u8 = undefined;
         const display_path = try render.shortenPath(state.current_dir, terminal_size.cols, &dir_buf);
@@ -127,7 +129,7 @@ pub fn main(init: std.process.Init) !void {
             try render.drawHelpScreen(stdout, state.help_page, terminal_size.rows);
         } else if (state.program_mode == .alias) {
             // Alias mode has its own screen with just the list of aliases
-            view.alias_matches = try cd_aliases.getFilteredAliases(frame_allocator, state.aliases, state.alias_buffer.items);
+            view.alias_matches = try aliases.getFilteredAliases(frame_allocator, state.aliases, state.alias_buffer.items);
             state.alias_index = @min(state.alias_index, view.alias_matches.len -| 1);
             try render.drawAliasScreen(stdout, &state, &view, active_error, terminal_size);
         } else {
@@ -162,7 +164,7 @@ pub fn main(init: std.process.Init) !void {
             },
             .run_shell => |command| {
                 const shell = init.environ_map.get("SHELL") orelse "/bin/sh";
-                const selected: ?file_entry = if (state.global_index < view.visible.len) view.visible[state.global_index] else null;
+                const selected: ?FileEntry = if (state.global_index < view.visible.len) view.visible[state.global_index] else null;
                 const expanded = handlers.expandShellCommand(frame_allocator, command, selected) catch |err| {
                     active_error = err;
                     continue;
@@ -210,7 +212,7 @@ fn openFile(
     stdin: *std.Io.Reader,
     frame_allocator: std.mem.Allocator,
     state: *const ProgramState,
-    item: file_entry,
+    item: FileEntry,
 ) !void {
     const file_full_name = try std.fmt.allocPrint(frame_allocator, "{s}{s}", .{
         item.name,
@@ -270,7 +272,7 @@ fn bulkRename(
     allocator: std.mem.Allocator,
     tmp_dir: []const u8,
     cwd: []const u8,
-    visible: []const file_entry,
+    visible: []const FileEntry,
 ) !void {
     // Same order as on screen, without ".."; a name containing a newline can't be written to the file
     var sources: std.ArrayList([]const u8) = .empty;
@@ -439,13 +441,13 @@ fn jumpToAlias(alias: Alias, state: *ProgramState, gpa: std.mem.Allocator, io: s
 
 // Tests from FileEntry.zig (sorting, formatting) run together with these
 test {
-    _ = file_entry;
+    _ = FileEntry;
     _ = render;
-    _ = cd_aliases;
+    _ = aliases;
     _ = input;
     _ = fs;
     _ = Terminal;
-    _ = state_zig;
+    _ = @import("state.zig");
     _ = @import("commands.zig");
     _ = @import("handlers.zig");
     _ = rename;

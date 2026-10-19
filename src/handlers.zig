@@ -1,21 +1,20 @@
 // Key handling in the individual modes: handlers only change state and return an Action,
 // side effects (opening a file, help, jumping to an alias...) are done by main
 const std = @import("std");
-const file_entry = @import("FileEntry.zig");
+const FileEntry = @import("FileEntry.zig");
 const Key = @import("input.zig").Key;
-const cd_aliases = @import("aliases.zig");
-const Alias = cd_aliases.Alias;
+const Alias = @import("aliases.zig").Alias;
+const singleAliasMatch = @import("aliases.zig").singleAliasMatch;
 const commands = @import("commands.zig").commands;
-const state_zig = @import("state.zig");
-const ProgramState = state_zig.ProgramState;
-const View = state_zig.View;
-const Action = state_zig.Action;
-const Mode = state_zig.Mode;
-const Sorting = state_zig.Sorting;
-const pushHistory = state_zig.pushHistory;
-const applyPendingCursor = state_zig.applyPendingCursor;
-const testState = state_zig.testState;
-const testEntry = state_zig.testEntry;
+const ProgramState = @import("state.zig").ProgramState;
+const View = @import("state.zig").View;
+const Action = @import("state.zig").Action;
+const Mode = @import("state.zig").Mode;
+const Sorting = @import("state.zig").Sorting;
+const pushHistory = @import("state.zig").pushHistory;
+const applyPendingCursor = @import("state.zig").applyPendingCursor;
+const testState = @import("state.zig").testState;
+const testEntry = @import("state.zig").testEntry;
 
 pub fn handleKey(key: Key, state: *ProgramState, view: *const View, gpa: std.mem.Allocator) !Action {
     // Ctrl+Z works in every mode
@@ -30,7 +29,7 @@ pub fn handleKey(key: Key, state: *ProgramState, view: *const View, gpa: std.mem
 }
 
 // Entering a directory
-fn enterDir(state: *ProgramState, gpa: std.mem.Allocator, item: file_entry) !void {
+fn enterDir(state: *ProgramState, gpa: std.mem.Allocator, item: FileEntry) !void {
     state.setCurrentDir(gpa, try std.fs.path.resolve(gpa, &.{
         state.current_dir,
         item.name,
@@ -259,7 +258,7 @@ fn handleAliasMode(key: Key, state: *ProgramState, view: *const View, gpa: std.m
                 try state.alias_buffer.append(gpa, c);
                 state.alias_index = 0;
                 // Only one alias left – jump right away, without Enter
-                if (cd_aliases.singleAliasMatch(state.aliases, state.alias_buffer.items)) |alias| return .{ .jump_to_alias = alias };
+                if (singleAliasMatch(state.aliases, state.alias_buffer.items)) |alias| return .{ .jump_to_alias = alias };
             },
             else => {},
         },
@@ -267,7 +266,7 @@ fn handleAliasMode(key: Key, state: *ProgramState, view: *const View, gpa: std.m
             if (state.alias_buffer.items.len > 0) {
                 _ = state.alias_buffer.pop();
                 state.alias_index = 0;
-                if (cd_aliases.singleAliasMatch(state.aliases, state.alias_buffer.items)) |alias| return .{ .jump_to_alias = alias };
+                if (singleAliasMatch(state.aliases, state.alias_buffer.items)) |alias| return .{ .jump_to_alias = alias };
             }
         },
         .up => {
@@ -303,7 +302,7 @@ fn handleHelpMode(key: Key, state: *ProgramState, view: *const View) Action {
 
 // :!command: % is replaced with the selected file's name (in single quotes, so spaces
 // and special characters survive), \% is a plain %. Without a selected file % is an error.
-pub fn expandShellCommand(allocator: std.mem.Allocator, command: []const u8, selected: ?file_entry) ![]const u8 {
+pub fn expandShellCommand(allocator: std.mem.Allocator, command: []const u8, selected: ?FileEntry) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     errdefer out.deinit(allocator);
     var i: usize = 0;
@@ -341,7 +340,7 @@ fn feedKeys(state: *ProgramState, view: *const View, keys: []const Key) !Action 
 test "count prefix: 5j and 3k" {
     var state = try testState("/tmp");
     defer state.deinit(std.testing.allocator);
-    var items: [10]file_entry = undefined;
+    var items: [10]FileEntry = undefined;
     for (&items) |*item| item.* = testEntry("f", false, 0);
     const view: View = .{ .visible = &items };
 
@@ -360,7 +359,7 @@ test "count prefix: 5j and 3k" {
 test "Enter: a file returns open_file, a directory changes the directory" {
     var state = try testState("/tmp");
     defer state.deinit(std.testing.allocator);
-    const items = [_]file_entry{ testEntry("sub", true, 0), testEntry("notes.txt", false, 10) };
+    const items = [_]FileEntry{ testEntry("sub", true, 0), testEntry("notes.txt", false, 10) };
     const view: View = .{ .visible = &items };
 
     state.global_index = 1;
@@ -382,7 +381,7 @@ test "h and then l puts the cursor back on the directory we came from" {
     try std.testing.expectEqualStrings("/tmp", state.current_dir);
 
     // New frame: contents of /tmp, cursor on "sub"
-    const parent = [_]file_entry{ testEntry("a", true, 0), testEntry("b", true, 0), testEntry("sub", true, 0) };
+    const parent = [_]FileEntry{ testEntry("a", true, 0), testEntry("b", true, 0), testEntry("sub", true, 0) };
     const view: View = .{ .visible = &parent };
     applyPendingCursor(&state, view.visible);
     try std.testing.expectEqual(@as(usize, 2), state.global_index);
@@ -396,7 +395,7 @@ test "h and then l puts the cursor back on the directory we came from" {
 test "commands :sS, :q and :<number>" {
     var state = try testState("/tmp");
     defer state.deinit(std.testing.allocator);
-    var items: [10]file_entry = undefined;
+    var items: [10]FileEntry = undefined;
     for (&items) |*item| item.* = testEntry("f", false, 0);
     const view: View = .{ .visible = &items };
 
@@ -460,7 +459,7 @@ test "help: paging, q closes, Ctrl+C quits" {
 }
 
 test ":! returns the shell command, an empty :! does nothing" {
-    var state = try state_zig.testState("/tmp");
+    var state = try testState("/tmp");
     defer state.deinit(std.testing.allocator);
     const view: View = .{};
 
@@ -472,7 +471,7 @@ test ":! returns the shell command, an empty :! does nothing" {
 }
 
 test ":sh returns an interactive shell" {
-    var state = try state_zig.testState("/tmp");
+    var state = try testState("/tmp");
     defer state.deinit(std.testing.allocator);
     const view: View = .{};
 
@@ -482,14 +481,14 @@ test ":sh returns an interactive shell" {
 
 test ":! replaces % with the selected file name" {
     const allocator = std.testing.allocator;
-    var file = state_zig.testEntry("my file", false, 0);
+    var file = @import("state.zig").testEntry("my file", false, 0);
     file.extension = ".txt";
 
     const expanded = try expandShellCommand(allocator, "wc -l % && echo 100\\%", file);
     defer allocator.free(expanded);
     try std.testing.expectEqualStrings("wc -l 'my file.txt' && echo 100%", expanded);
 
-    const quoted = try expandShellCommand(allocator, "cat %", state_zig.testEntry("it's", false, 0));
+    const quoted = try expandShellCommand(allocator, "cat %", testEntry("it's", false, 0));
     defer allocator.free(quoted);
     try std.testing.expectEqualStrings("cat 'it'\\''s'", quoted);
 

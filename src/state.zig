@@ -1,6 +1,6 @@
 // Program state (lives across frames), data for a single frame (View) and how it is computed
 const std = @import("std");
-const file_entry = @import("FileEntry.zig");
+const FileEntry = @import("FileEntry.zig");
 const Terminal = @import("Terminal.zig");
 const Alias = @import("aliases.zig").Alias;
 
@@ -32,16 +32,16 @@ pub const PendingCursor = union(enum) {
     // After h (or l going back down the same path): on the directory we came from (forward history)
     from_history,
     // After sorting / toggling hidden files: on the same item (the index changes, the file doesn't)
-    item: file_entry,
+    item: FileEntry,
 };
 
 // Derived data for a single frame. Recomputed from ProgramState on every iteration and lives
 // in the frame arena, which is why it isn't in ProgramState (across frames it would point to freed memory)
 pub const View = struct {
     // Items after hiding hidden files and applying the search filter; global_index points here
-    visible: []const file_entry = &.{},
+    visible: []const FileEntry = &.{},
     // Rows that fit on the screen, and the index of the first of them in visible
-    window: []const file_entry = &.{},
+    window: []const FileEntry = &.{},
     window_start: usize = 0,
     // Alias mode: aliases matching the filter
     alias_matches: []const Alias = &.{},
@@ -58,7 +58,7 @@ pub const ProgramState = struct {
     current_sorting: Sorting = .by_name_dirs_first,
     command_buffer: std.ArrayList(u8),
     search_buffer: std.ArrayList(u8),
-    current_dir_contents: []file_entry = &.{},
+    current_dir_contents: []FileEntry = &.{},
     // Count prefix for j/k (5j): the number being typed, 0 = no count
     count: usize = 0,
     // Where to put the cursor in the next frame, once we know the new list (only once, not every frame)
@@ -76,7 +76,7 @@ pub const ProgramState = struct {
     history_forward: std.ArrayList([]const u8),
 
     // Name of the alias that leads to this directory (the first one found), otherwise null
-    pub fn aliasFor(self: *const ProgramState, file: file_entry) ?[]const u8 {
+    pub fn aliasFor(self: *const ProgramState, file: FileEntry) ?[]const u8 {
         if (!file.is_dir or self.aliases.len == 0) return null;
         var path_buf: [std.fs.max_path_bytes]u8 = undefined;
         // On "/" the slash is already there, elsewhere we add one between the directory and the name
@@ -125,12 +125,12 @@ pub const ProgramState = struct {
         if (items.len > 0 and std.mem.eql(u8, items[0].name, "..")) items = items[1..];
 
         switch (self.current_sorting) {
-            .by_name => std.mem.sort(file_entry, items, {}, file_entry.lessThanByName),
-            .by_name_dirs_first => std.mem.sort(file_entry, items, {}, file_entry.lessThanByNameDirsFirst),
-            .by_date => std.mem.sort(file_entry, items, {}, file_entry.lessThanByDate),
-            .by_date_dirs_first => std.mem.sort(file_entry, items, {}, file_entry.lessThanByDateDirsFirst),
-            .by_size_asc => std.mem.sort(file_entry, items, {}, file_entry.lessThanBySizeAsc),
-            .by_size_desc => std.mem.sort(file_entry, items, {}, file_entry.lessThanBySizeDesc),
+            .by_name => std.mem.sort(FileEntry, items, {}, FileEntry.lessThanByName),
+            .by_name_dirs_first => std.mem.sort(FileEntry, items, {}, FileEntry.lessThanByNameDirsFirst),
+            .by_date => std.mem.sort(FileEntry, items, {}, FileEntry.lessThanByDate),
+            .by_date_dirs_first => std.mem.sort(FileEntry, items, {}, FileEntry.lessThanByDateDirsFirst),
+            .by_size_asc => std.mem.sort(FileEntry, items, {}, FileEntry.lessThanBySizeAsc),
+            .by_size_desc => std.mem.sort(FileEntry, items, {}, FileEntry.lessThanBySizeDesc),
         }
     }
 
@@ -165,7 +165,7 @@ pub const Action = union(enum) {
     none,
     quit,
     suspend_process,
-    open_file: file_entry,
+    open_file: FileEntry,
     jump_to_alias: Alias,
     // :!command – the text after the exclamation mark (points into command_buffer, main runs it right away)
     run_shell: []const u8,
@@ -183,16 +183,16 @@ pub fn pushHistory(list: *std.ArrayList([]const u8), allocator: std.mem.Allocato
 }
 
 // Items the user sees: without hidden ones (if we don't show them) and filtered by the search
-pub fn getVisibleItems(allocator: std.mem.Allocator, state: *const ProgramState) ![]const file_entry {
-    var items: []const file_entry = state.current_dir_contents;
+pub fn getVisibleItems(allocator: std.mem.Allocator, state: *const ProgramState) ![]const FileEntry {
+    var items: []const FileEntry = state.current_dir_contents;
     if (!state.viewing.hidden) items = try getOnlyVisibleItems(allocator, items);
     if (state.search_buffer.items.len > 0) items = try getFilteredItemsByName(allocator, items, state.search_buffer.items);
     return items;
 }
 
-fn getOnlyVisibleItems(allocator: std.mem.Allocator, items: []const file_entry) ![]const file_entry {
+fn getOnlyVisibleItems(allocator: std.mem.Allocator, items: []const FileEntry) ![]const FileEntry {
     // A simple filter for visible things
-    var result: std.ArrayList(file_entry) = .empty;
+    var result: std.ArrayList(FileEntry) = .empty;
     errdefer result.deinit(allocator);
 
     for (items) |item| {
@@ -205,10 +205,10 @@ fn getOnlyVisibleItems(allocator: std.mem.Allocator, items: []const file_entry) 
 
 fn getFilteredItemsByName(
     allocator: std.mem.Allocator,
-    items: []const file_entry,
+    items: []const FileEntry,
     search_str: []const u8,
-) ![]const file_entry {
-    var result: std.ArrayList(file_entry) = .empty;
+) ![]const FileEntry {
+    var result: std.ArrayList(FileEntry) = .empty;
     errdefer result.deinit(allocator);
     var name_buf: [std.fs.max_path_bytes]u8 = undefined;
 
@@ -239,7 +239,7 @@ pub fn setWindow(view: *View, terminal_size: Terminal.Size, global_index: usize)
 }
 
 // Cursor to the place remembered in the previous step (pending_cursor), once we know the new list
-pub fn applyPendingCursor(state: *ProgramState, visible: []const file_entry) void {
+pub fn applyPendingCursor(state: *ProgramState, visible: []const FileEntry) void {
     const pending = state.pending_cursor;
     state.pending_cursor = .none;
     switch (pending) {
@@ -282,12 +282,12 @@ pub fn testState(dir: []const u8) !ProgramState {
     };
 }
 
-pub fn testEntry(name: []const u8, is_dir: bool, size: usize) file_entry {
+pub fn testEntry(name: []const u8, is_dir: bool, size: usize) FileEntry {
     return .{ .name = name, .extension = "", .is_dir = is_dir, .size = size, .permissions = @enumFromInt(0o644) };
 }
 
 test "setWindow keeps the cursor in the middle and stops at the edges" {
-    var items: [100]file_entry = undefined;
+    var items: [100]FileEntry = undefined;
     for (&items) |*item| item.* = testEntry("f", false, 0);
     const size: Terminal.Size = .{ .rows = 24, .cols = 80 }; // 20 rows for the list
 

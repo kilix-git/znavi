@@ -1,6 +1,6 @@
 // this file does things with the filesystem, opens a dir, then reads the contents and fills up the []FileEntry struct with data if it is possible
 const std = @import("std");
-const file_entry = @import("FileEntry.zig");
+const FileEntry = @import("FileEntry.zig");
 
 // this function is used precisely once after starting the program, then current_dir is changed and this function never gets called again
 // arg is an argument from the command line, we can run znavi with a path as an argument, so it opens there
@@ -68,8 +68,8 @@ pub fn getDirContents(
     directory_name: []const u8,
     skipped_error: *?anyerror,
     with_owner: bool,
-) ![]file_entry {
-    var list: std.ArrayList(file_entry) = .empty;
+) ![]FileEntry {
+    var list: std.ArrayList(FileEntry) = .empty;
     errdefer list.deinit(arena_allocator);
 
     var dir = try std.Io.Dir.openDirAbsolute(io, directory_name, .{ .iterate = true });
