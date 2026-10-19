@@ -393,22 +393,22 @@ fn getLongestNameLength(files: []const file_entry) usize {
 
 // ===================== Testy =====================
 
-test "displayWidth počíta znaky, nie bajty" {
-    try std.testing.expectEqual(@as(usize, 5), displayWidth("škola"));
+test "displayWidth counts characters, not bytes" {
+    try std.testing.expectEqual(@as(usize, 5), displayWidth("johny"));
     try std.testing.expectEqual(@as(usize, 5), displayWidth("hello"));
     try std.testing.expectEqual(@as(usize, 0), displayWidth(""));
-    // Neplatné UTF-8: počítame bajty
+    // failed UTF-8: counting bytes
     try std.testing.expectEqual(@as(usize, 2), displayWidth("\xff\xfe"));
 }
 
-test "truncateToWidth nereže v strede znaku" {
-    try std.testing.expectEqualStrings("šk", truncateToWidth("škola", 2));
-    try std.testing.expectEqualStrings("škola", truncateToWidth("škola", 10));
-    try std.testing.expectEqualStrings("", truncateToWidth("škola", 0));
+test "truncateToWidth does not cut in the middle" {
+    try std.testing.expectEqualStrings("sc", truncateToWidth("school", 2));
+    try std.testing.expectEqualStrings("school", truncateToWidth("school", 10));
+    try std.testing.expectEqualStrings("", truncateToWidth("school", 0));
     try std.testing.expectEqualStrings("ab", truncateToWidth("abc", 2));
 }
 
-test "writeFrame maže každý riadok na začiatku a zvyšok obrazovky na konci" {
+test "writeFrame clears each line at its start and the rest of the screen at the end" {
     var buf: [128]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     try writeFrame(&w, "ab\ncd\n");
@@ -420,29 +420,29 @@ fn expectShortened(dir: []const u8, cols: u16, expected: []const u8) !void {
     try std.testing.expectEqualStrings(expected, try shortenPath(dir, cols, &buf));
 }
 
-test "shortenPath skracuje fish-style" {
+test "shortenPath shortens fish-style" {
     const long = "/usr/home/matej/frikkinlongdirectoryname/src/zig/zig-out";
-    // Zmestí sa – bez zmeny
+    // It fits – no change
     try expectShortened(long, 80, long);
-    // Skracujeme zľava, iba kým to treba
+    // Shorten from the left, only as much as needed
     try expectShortened(long, 30, "/u/h/m/f/src/zig/zig-out");
-    // Posledný adresár nikdy neskracujeme; ak sa nezmestí ani tak, ostane koniec cesty
+    // The last directory is never shortened; if it still doesn't fit, the end of the path stays
     try expectShortened(long, 10, "/zig-out");
-    // Bodka na začiatku ostáva (.config -> .c)
+    // A leading dot is kept (.config -> .c)
     try expectShortened("/home/.config/very_long_directory_name", 32, "/h/.c/very_long_directory_name");
-    // Celý prvý UTF-8 znak, nie iba jeho prvý bajt
+    // The whole first UTF-8 character, not just its first byte
     try expectShortened("/školské/dokumenty_dlhé", 20, "/š/dokumenty_dlhé");
 }
 
-test "nápoveda: strany pokryjú celý text" {
-    // Vysoký terminál: všetko na jednej strane
+test "help: the pages cover the whole text" {
+    // Tall terminal: everything on one page
     try std.testing.expectEqual(@as(usize, 1), helpPageCount(1000));
 
-    // 10 riadkov = 9 riadkov textu + pätička na stranu
+    // 10 rows = 9 lines of text + a footer per page
     const total_lines = std.mem.count(u8, help_text, "\n") + 1;
     try std.testing.expectEqual((total_lines + 8) / 9, helpPageCount(10));
 
-    // Druhá strana začína 10. riadkom textu
+    // The second page starts with the 10th line of text
     var buf: [8192]u8 = undefined;
     var w: std.Io.Writer = .fixed(&buf);
     try drawHelpScreen(&w, 1, 10);
