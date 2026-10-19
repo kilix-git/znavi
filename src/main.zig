@@ -167,10 +167,19 @@ pub fn main(init: std.process.Init) !void {
                     active_error = err;
                     continue;
                 };
-                runShell(io, terminal, stdout, stdin, shell, state.current_dir, expanded) catch |err| {
+                runShell(io, terminal, stdout, stdin, state.current_dir, &.{ shell, "-c", expanded }) catch |err| {
                     active_error = err;
                 };
                 // Príkaz mohol súbory vytvoriť, zmazať či premenovať – načítame adresár znova
+                state.rememberSelected(&view);
+                state.dir_changed = true;
+            },
+            .interactive_shell => {
+                const shell = init.environ_map.get("SHELL") orelse "/bin/sh";
+                runShell(io, terminal, stdout, stdin, state.current_dir, &.{shell}) catch |err| {
+                    active_error = err;
+                };
+                // V shelli sa mohlo v adresári čokoľvek zmeniť
                 state.rememberSelected(&view);
                 state.dir_changed = true;
             },
@@ -351,22 +360,21 @@ fn openDetached(io: std.Io, cwd: []const u8, path: []const u8) !void {
     }
 }
 
-// :!príkaz – spustí ho cez shell v aktuálnom adresári na normálnom termináli (ako vim),
-// potom počká na Enter, aby bolo vidno výstup
+// :!príkaz (argv = shell -c príkaz) alebo :sh (argv = iba shell) – spustí sa v aktuálnom
+// adresári na normálnom termináli (ako vim); po :! počká na Enter, aby bolo vidno výstup
 fn runShell(
     io: std.Io,
     terminal: Terminal,
     stdout: *std.Io.Writer,
     stdin: *std.Io.Reader,
-    shell: []const u8,
     cwd: []const u8,
-    command: []const u8,
+    argv: []const []const u8,
 ) !void {
     terminal.leaveRaw();
     defer terminal.enterRaw() catch {};
 
     var child = try std.process.spawn(io, .{
-        .argv = &.{ shell, "-c", command },
+        .argv = argv,
         .cwd = .{ .path = cwd },
         .stdin = .inherit,
         .stdout = .inherit,
@@ -374,6 +382,8 @@ fn runShell(
     });
     const term = try child.wait(io);
 
+    // Interaktívny :sh – exit kód je iba z posledného príkazu v ňom, na Enter nečakáme
+    if (argv.len == 1) return;
     switch (term) {
         .exited => |code| if (code != 0) try stdout.print("\nshell returned {d}", .{code}),
         else => try stdout.print("\nshell terminated: {t}", .{term}),

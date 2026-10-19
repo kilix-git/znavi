@@ -471,6 +471,15 @@ test ":! vráti shellový príkaz, prázdne :! nič" {
     try std.testing.expectEqual(Action.none, try feedKeys(&state, &view, &.{ .command, .{ .char = '!' }, .{ .char = '\r' } }));
 }
 
+test ":sh vráti interaktívny shell" {
+    var state = try state_zig.testState("/tmp");
+    defer state.deinit(std.testing.allocator);
+    const view: View = .{};
+
+    try std.testing.expectEqual(Action.interactive_shell, try feedKeys(&state, &view, &.{ .command, .{ .char = 's' }, .{ .char = 'h' }, .{ .char = '\r' } }));
+    try std.testing.expectEqual(Mode.normal, state.program_mode);
+}
+
 test ":! nahradí % menom vybraného súboru" {
     const allocator = std.testing.allocator;
     var file = state_zig.testEntry("my file", false, 0);

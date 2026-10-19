@@ -171,6 +171,8 @@ pub const Action = union(enum) {
     run_shell: []const u8,
     // :cw – batch rename of the visible files in $EDITOR (main runs it, see rename.zig)
     bulk_rename,
+    // :sh – interactive $SHELL in the current directory, back to znavi when it exits
+    interactive_shell,
 };
 
 // Uloží kópiu cesty do histórie; ak append zlyhá, kópiu uvoľníme, aby neunikla

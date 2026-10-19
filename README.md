@@ -67,6 +67,7 @@ Press `?` in normal mode or `:?` in command mode inside znavi for the full list 
 | `:a`        | Aliases                                        |
 | `:<number>` | Jump to that index                             |
 | `:!<cmd>`   | Run a shell command in the current directory (`%` = selected file, `\%` = literal `%`) |
+| `:sh`       | Open an interactive `$SHELL` in the current directory; `exit` returns to znavi |
 | `:?`        | Help                                           |
 
 ## Opening files
