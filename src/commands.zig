@@ -84,7 +84,6 @@ fn toggleGroup(state: *ProgramState, _: *const View) Action {
     return .none;
 }
 
-// TODO: comprehend this
 fn toggleView(comptime field: []const u8) *const fn (*ProgramState, *const View) Action {
     return struct {
         fn run(state: *ProgramState, _: *const View) Action {

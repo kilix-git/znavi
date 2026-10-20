@@ -170,6 +170,7 @@ fn handleNormalMode(key: Key, state: *ProgramState, view: *const View, gpa: std.
         },
         .char => |c| switch (c) {
             'r' => state.refresh(view),
+            's' => return .interactive_shell,
             else => {},
         },
     }
@@ -491,13 +492,16 @@ test ":! returns the shell command, an empty :! does nothing" {
     try std.testing.expectEqual(Action.none, try feedKeys(&state, &view, &.{ .command, .{ .char = '!' }, .enter }));
 }
 
-test ":sh returns an interactive shell" {
+test ":sh and s return an interactive shell" {
     var state = try testState("/tmp");
     defer state.deinit(std.testing.allocator);
     const view: View = .{};
 
     try std.testing.expectEqual(Action.interactive_shell, try feedKeys(&state, &view, &.{ .command, .{ .char = 's' }, .{ .char = 'h' }, .enter }));
     try std.testing.expectEqual(Mode.normal, state.program_mode);
+
+    // s in normal mode does the same
+    try std.testing.expectEqual(Action.interactive_shell, try feedKeys(&state, &view, &.{.{ .char = 's' }}));
 }
 
 test ":! replaces % with the selected file name" {

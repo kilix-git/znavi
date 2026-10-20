@@ -274,6 +274,7 @@ const help_text =
     \\  /         - Search (Enter keeps filter, Esc clears it)
     \\  a         - Aliases (same as :a)
     \\  r         - Refresh directory contents (same as :r)
+    \\  s         - Open $SHELL here, exit it to return (same as :sh)
     \\  ?         - Show this help screen
     \\  q         - Quit program (also Ctrl+c)
     \\  Ctrl+z    - Suspend (resume with fg)

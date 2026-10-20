@@ -47,6 +47,7 @@ Press `?` in normal mode or `:?` in command mode inside znavi for the full list 
 | Backspace, `Ctrl+h`| Toggle hidden files                         |
 | `a`                | Alias mode                                  |
 | `r`                | Refresh directory contents                  |
+| `s`                | Open `$SHELL` in the current directory (same as `:sh`) |
 | `:`                | Command mode                                |
 | `?`                | Help                                        |
 | `q`, `Ctrl+c`      | Quit                                        |
