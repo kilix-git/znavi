@@ -30,7 +30,7 @@ pub fn drawScreen(
 
     // Column widths are measured over the whole (filtered) directory, not just the rows on screen,
     // so the columns don't shift while scrolling
-    const longest_name_len = getLongestNameLength(view.visible);
+    const longest_name_len = getLongestNameLength(view.visible, state.viewing.extension);
 
     // Start of the window in visible, so the row numbers match the :<number> command
     const window_start = view.window_start;
@@ -78,10 +78,10 @@ pub fn drawScreen(
         try stream_writer.writeAll(pointer);
         try stream_writer.print("{[value]d:>[width]} ", .{ .value = idx, .width = index_width });
 
-        // The full name (name + extension + slash); if it's longer than the column, cut it and add "…"
+        // The shown name (+ slash for directories); if it's longer than the column, cut it and add "…"
         var name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
         var full_name_buf: [std.Io.Dir.max_name_bytes + 1]u8 = undefined;
-        const full_name: []const u8 = std.fmt.bufPrint(&full_name_buf, "{s}{s}", .{ file.fullName(&name_buf), slash }) catch unreachable;
+        const full_name: []const u8 = std.fmt.bufPrint(&full_name_buf, "{s}{s}", .{ shownName(file, state.viewing.extension, &name_buf), slash }) catch unreachable;
         var shown_name = full_name;
         var ellipsis: []const u8 = "";
         if (displayWidth(full_name) > name_col) {
@@ -379,20 +379,25 @@ fn writePadded(writer: *std.Io.Writer, s: []const u8, width: usize) !void {
     try writer.splatByteAll(' ', width -| displayWidth(s));
 }
 
-fn getLongestNameLength(files: []const FileEntry) usize {
+// The name as shown in the list: without the extension when :ve turned extensions off
+fn shownName(file: FileEntry, show_extension: bool, buf: *[std.Io.Dir.max_name_bytes]u8) []const u8 {
+    return if (show_extension) file.fullName(buf) else file.name;
+}
+
+fn getLongestNameLength(files: []const FileEntry, show_extension: bool) usize {
     var longest_len: usize = 0;
 
     var name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
     for (files) |file| {
         const slash_len: usize = if (file.is_dir) 1 else 0;
-        const current_len = displayWidth(file.fullName(&name_buf)) + slash_len;
+        const current_len = displayWidth(shownName(file, show_extension, &name_buf)) + slash_len;
         // std.math.max returns the larger of two values
         longest_len = @max(longest_len, current_len);
     }
     return longest_len;
 }
 
-// ===================== Testy =====================
+// ===================== Tests =====================
 
 test "displayWidth counts characters, not bytes" {
     try std.testing.expectEqual(@as(usize, 5), displayWidth("johny"));
@@ -452,4 +457,16 @@ test "help: the pages cover the whole text" {
     const expected_first = try std.fmt.allocPrint(std.testing.allocator, "\x1B[H\x1B[K{s}\n", .{lines.next().?});
     defer std.testing.allocator.free(expected_first);
     try std.testing.expect(std.mem.startsWith(u8, w.buffered(), expected_first));
+}
+
+test "shownName and the name column follow :ve" {
+    var buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
+    var file = FileEntry{ .name = "notes", .extension = ".txt", .permissions = .fromMode(0o644) };
+    try std.testing.expectEqualStrings("notes.txt", shownName(file, true, &buf));
+    try std.testing.expectEqualStrings("notes", shownName(file, false, &buf));
+
+    file.extension = ".markdown";
+    const files = [_]FileEntry{ file, .{ .name = "dir", .extension = "", .is_dir = true, .permissions = .fromMode(0o755) } };
+    try std.testing.expectEqual(@as(usize, 14), getLongestNameLength(&files, true));
+    try std.testing.expectEqual(@as(usize, 5), getLongestNameLength(&files, false));
 }

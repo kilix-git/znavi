@@ -25,6 +25,8 @@ pub const Viewing = struct {
     owner: bool = false,
     group: bool = false,
     aliases: bool = false,
+    // :ve – when off, the list shows "notes" instead of "notes.txt" (search and :! % still use the full name)
+    extension: bool = true,
 };
 
 pub const PendingCursor = union(enum) {

@@ -23,6 +23,7 @@ pub const commands = [_]Command{
     .{ .name = "vp", .help = "Toggle permissions visibility", .run = toggleView("permissions") },
     .{ .name = "vo", .help = "Toggle owner visibility", .run = toggleOwner },
     .{ .name = "vg", .help = "Toggle group visibility", .run = toggleGroup },
+    .{ .name = "ve", .help = "Toggle file extension visibility", .run = toggleView("extension") },
     .{ .name = "sn", .help = "Sort by name", .run = sortBy(.by_name) },
     .{ .name = "sN", .help = "Sort by name, dirs first", .run = sortBy(.by_name_dirs_first) },
     .{ .name = "sd", .help = "Sort by date", .run = sortBy(.by_date) },

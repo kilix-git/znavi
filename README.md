@@ -60,6 +60,7 @@ Press `?` in normal mode or `:?` in command mode inside znavi for the full list 
 | `:r`        | Refresh directory contents                     |
 | `:h`        | Toggle hidden files                            |
 | `:vd` `:vs` `:vp` `:vo` `:vg` `:va` | Toggle date, size, permissions, owner, group, alias columns |
+| `:ve`       | Toggle file extensions in the list (`notes.txt` / `notes`) |
 | `:sn` / `:sN` | Sort by name / name with directories first   |
 | `:sd` / `:sD` | Sort by date / date with directories first   |
 | `:ss` / `:sS` | Sort by size, smallest / largest first       |
