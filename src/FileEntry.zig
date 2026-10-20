@@ -19,6 +19,17 @@ owner_name: []const u8 = "?",
 group_name: []const u8 = "?",
 permissions: std.Io.File.Permissions,
 
+// Full file name as it is on disk ("notes" + ".txt"). Name and extension were split from one
+// directory entry, so together they always fit into a max_name_bytes buffer.
+pub fn fullName(self: Self, buf: *[std.Io.Dir.max_name_bytes]u8) []const u8 {
+    return std.fmt.bufPrint(buf, "{s}{s}", .{ self.name, self.extension }) catch unreachable;
+}
+
+// The same file name (foo.c vs foo.h differ only in the extension)
+pub fn sameName(self: Self, other: Self) bool {
+    return std.mem.eql(u8, self.name, other.name) and std.mem.eql(u8, self.extension, other.extension);
+}
+
 pub fn lessThanByName(context: void, a: Self, b: Self) bool {
     _ = context;
     return std.mem.lessThan(u8, a.name, b.name);
@@ -214,4 +225,22 @@ test "getFormattedDateTime" {
     // 2001-09-09 01:46:40 UTC
     entry.date = .fromNanoseconds(1_000_000_000 * std.time.ns_per_s);
     try std.testing.expectEqualStrings("2001-09-09 01:46:40", entry.getFormattedDateTime(&buf));
+}
+
+test "fullName and sameName" {
+    var buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
+    var c_file = testEntry("foo", false, 0);
+    c_file.extension = ".c";
+    var h_file = c_file;
+    h_file.extension = ".h";
+    try std.testing.expectEqualStrings("foo.c", c_file.fullName(&buf));
+    try std.testing.expectEqualStrings("dir", testEntry("dir", true, 0).fullName(&buf));
+    try std.testing.expect(c_file.sameName(c_file));
+    try std.testing.expect(!c_file.sameName(h_file));
+
+    // The longest possible name still fits
+    const long = "x" ** (std.Io.Dir.max_name_bytes - 4);
+    var long_file = testEntry(long, false, 0);
+    long_file.extension = ".txt";
+    try std.testing.expectEqual(std.Io.Dir.max_name_bytes, long_file.fullName(&buf).len);
 }

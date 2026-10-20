@@ -320,11 +320,10 @@ pub fn expandShellCommand(allocator: std.mem.Allocator, command: []const u8, sel
         } else if (c == '%') {
             const file = selected orelse return error.NoFileSelected;
             // 'name' – a single quote in the name is written as '\'' (closes, escapes, reopens)
+            var name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
             try out.append(allocator, '\'');
-            for ([_][]const u8{ file.name, file.extension }) |part| {
-                for (part) |ch| {
-                    if (ch == '\'') try out.appendSlice(allocator, "'\\''") else try out.append(allocator, ch);
-                }
+            for (file.fullName(&name_buf)) |ch| {
+                if (ch == '\'') try out.appendSlice(allocator, "'\\''") else try out.append(allocator, ch);
             }
             try out.append(allocator, '\'');
         } else {

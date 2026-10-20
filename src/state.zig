@@ -210,12 +210,11 @@ fn getFilteredItemsByName(
 ) ![]const FileEntry {
     var result: std.ArrayList(FileEntry) = .empty;
     errdefer result.deinit(allocator);
-    var name_buf: [std.fs.max_path_bytes]u8 = undefined;
+    var name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
 
     for (items) |item| {
-        // Join the name and extension so the search sees the whole file name
-        const full_name = std.fmt.bufPrint(&name_buf, "{s}{s}", .{ item.name, item.extension }) catch item.name;
-        if (std.ascii.indexOfIgnoreCase(full_name, search_str) != null) {
+        // The search sees the whole file name, extension included
+        if (std.ascii.indexOfIgnoreCase(item.fullName(&name_buf), search_str) != null) {
             try result.append(allocator, item);
         }
     }
@@ -254,12 +253,12 @@ pub fn applyPendingCursor(state: *ProgramState, visible: []const FileEntry) void
                 }
             }
         },
-        // Name + extension (foo.c vs foo.h). If it's no longer there (e.g. we just hid it),
+        // The same file name (foo.c vs foo.h). If it's no longer there (e.g. we just hid it),
         // we stay on the same row in the list
         .item => |target| {
             state.global_index = @min(state.global_index, visible.len -| 1);
             for (visible, 0..) |item, idx| {
-                if (std.mem.eql(u8, item.name, target.name) and std.mem.eql(u8, item.extension, target.extension)) {
+                if (item.sameName(target)) {
                     state.global_index = idx;
                     return;
                 }

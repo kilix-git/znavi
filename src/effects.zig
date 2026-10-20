@@ -97,8 +97,8 @@ fn exitedCleanly(term: std.process.Child.Term) bool {
 
 // Opening a file: text in $VISUAL/$EDITOR, everything else via xdg-open (detached)
 pub fn openFile(ui: Ui, allocator: std.mem.Allocator, cwd: []const u8, item: FileEntry) !void {
-    const file_full_name = try std.fmt.allocPrint(allocator, "{s}{s}", .{ item.name, item.extension });
-    const full_path = try std.fs.path.join(allocator, &.{ cwd, file_full_name });
+    var name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
+    const full_path = try std.fs.path.join(allocator, &.{ cwd, item.fullName(&name_buf) });
 
     // statFile follows a symlink to its target. Only open regular files – on a FIFO even the
     // open itself would hang (text sniffing and xdg-open alike) and znavi couldn't even be quit
@@ -135,9 +135,10 @@ pub fn bulkRename(
     // Same order as on screen, without ".."; a name containing a newline can't be written to the file
     var sources: std.ArrayList([]const u8) = .empty;
     var list: std.ArrayList(u8) = .empty;
+    var name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
     for (visible) |item| {
         if (item.is_parent) continue;
-        const name = try std.fmt.allocPrint(allocator, "{s}{s}", .{ item.name, item.extension });
+        const name = try allocator.dupe(u8, item.fullName(&name_buf));
         if (std.mem.indexOfAny(u8, name, "\r\n") != null) continue;
         try sources.append(allocator, name);
         try list.print(allocator, "{s}\n", .{name});

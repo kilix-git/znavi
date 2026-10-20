@@ -79,8 +79,9 @@ pub fn drawScreen(
         try stream_writer.print("{[value]d:>[width]} ", .{ .value = idx, .width = index_width });
 
         // The full name (name + extension + slash); if it's longer than the column, cut it and add "…"
-        var full_name_buf: [std.fs.max_path_bytes + 1]u8 = undefined;
-        const full_name = std.fmt.bufPrint(&full_name_buf, "{s}{s}{s}", .{ file.name, file.extension, slash }) catch file.name;
+        var name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
+        var full_name_buf: [std.Io.Dir.max_name_bytes + 1]u8 = undefined;
+        const full_name: []const u8 = std.fmt.bufPrint(&full_name_buf, "{s}{s}", .{ file.fullName(&name_buf), slash }) catch unreachable;
         var shown_name = full_name;
         var ellipsis: []const u8 = "";
         if (displayWidth(full_name) > name_col) {
@@ -381,9 +382,10 @@ fn writePadded(writer: *std.Io.Writer, s: []const u8, width: usize) !void {
 fn getLongestNameLength(files: []const FileEntry) usize {
     var longest_len: usize = 0;
 
+    var name_buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
     for (files) |file| {
         const slash_len: usize = if (file.is_dir) 1 else 0;
-        const current_len = displayWidth(file.name) + displayWidth(file.extension) + slash_len;
+        const current_len = displayWidth(file.fullName(&name_buf)) + slash_len;
         // std.math.max returns the larger of two values
         longest_len = @max(longest_len, current_len);
     }
