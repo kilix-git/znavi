@@ -94,6 +94,23 @@ pub fn lessThanBySizeDesc(context: void, a: Self, b: Self) bool {
     return a.size > b.size;
 }
 
+// sorting by extension: directories (they have no extension) go first by name, then files
+// by extension, files without one first; files with the same extension are sorted by name
+pub fn lessThanByExtAsc(context: void, a: Self, b: Self) bool {
+    _ = context;
+    if (a.is_dir != b.is_dir) return a.is_dir;
+    if (a.is_dir or std.mem.eql(u8, a.extension, b.extension)) return std.mem.lessThan(u8, a.name, b.name);
+    return std.mem.lessThan(u8, a.extension, b.extension);
+}
+
+// the same, but extensions from the end of the alphabet, files without one last
+pub fn lessThanByExtDesc(context: void, a: Self, b: Self) bool {
+    _ = context;
+    if (a.is_dir != b.is_dir) return a.is_dir;
+    if (a.is_dir or std.mem.eql(u8, a.extension, b.extension)) return std.mem.lessThan(u8, a.name, b.name);
+    return std.mem.lessThan(u8, b.extension, a.extension);
+}
+
 pub fn getFormattedDateTime(self: Self, buf: []u8) []const u8 {
     // turn nanoseconds to seconds
     const total_seconds = @divTrunc(self.date.toNanoseconds(), std.time.ns_per_s);
@@ -201,6 +218,32 @@ test "sorting by date: newest first" {
     std.mem.sort(Self, &items, {}, lessThanByDateDirsFirst);
     try std.testing.expectEqualStrings("dir", items[0].name);
     try std.testing.expectEqualStrings("new", items[1].name);
+}
+
+test "sorting by extension: dirs first, then by extension, the same extension by name" {
+    var buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
+    const Case = struct { name: []const u8, ext: []const u8, is_dir: bool = false };
+    const cases = [_]Case{
+        .{ .name = "b", .ext = ".txt" },
+        .{ .name = "zdir", .ext = "", .is_dir = true },
+        .{ .name = "Makefile", .ext = "" },
+        .{ .name = "a", .ext = ".txt" },
+        .{ .name = "main", .ext = ".c" },
+        .{ .name = "adir", .ext = "", .is_dir = true },
+    };
+    var items: [cases.len]Self = undefined;
+    for (&items, cases) |*item, c| {
+        item.* = testEntry(c.name, c.is_dir, 0);
+        item.extension = c.ext;
+    }
+
+    const asc = [_][]const u8{ "adir", "zdir", "Makefile", "main.c", "a.txt", "b.txt" };
+    std.mem.sort(Self, &items, {}, lessThanByExtAsc);
+    for (asc, items) |expected, item| try std.testing.expectEqualStrings(expected, item.fullName(&buf));
+
+    const desc = [_][]const u8{ "adir", "zdir", "a.txt", "b.txt", "main.c", "Makefile" };
+    std.mem.sort(Self, &items, {}, lessThanByExtDesc);
+    for (desc, items) |expected, item| try std.testing.expectEqualStrings(expected, item.fullName(&buf));
 }
 
 test "getFormattedSize" {

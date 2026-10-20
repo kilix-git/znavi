@@ -64,6 +64,7 @@ Press `?` in normal mode or `:?` in command mode inside znavi for the full list 
 | `:sn` / `:sN` | Sort by name / name with directories first   |
 | `:sd` / `:sD` | Sort by date / date with directories first   |
 | `:ss` / `:sS` | Sort by size, smallest / largest first       |
+| `:se` / `:sE` | Sort by extension, A to Z / Z to A           |
 | `:cw`       | Batch rename the visible files in your editor (see below) |
 | `:a`        | Aliases                                        |
 | `:<number>` | Jump to that index                             |

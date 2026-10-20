@@ -15,6 +15,8 @@ pub const Sorting = enum {
     by_date_dirs_first,
     by_size_asc,
     by_size_desc,
+    by_ext_asc,
+    by_ext_desc,
 };
 
 pub const Viewing = struct {
@@ -133,6 +135,8 @@ pub const ProgramState = struct {
             .by_date_dirs_first => std.mem.sort(FileEntry, items, {}, FileEntry.lessThanByDateDirsFirst),
             .by_size_asc => std.mem.sort(FileEntry, items, {}, FileEntry.lessThanBySizeAsc),
             .by_size_desc => std.mem.sort(FileEntry, items, {}, FileEntry.lessThanBySizeDesc),
+            .by_ext_asc => std.mem.sort(FileEntry, items, {}, FileEntry.lessThanByExtAsc),
+            .by_ext_desc => std.mem.sort(FileEntry, items, {}, FileEntry.lessThanByExtDesc),
         }
     }
 

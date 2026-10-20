@@ -30,6 +30,8 @@ pub const commands = [_]Command{
     .{ .name = "sD", .help = "Sort by date, dirs first", .run = sortBy(.by_date_dirs_first) },
     .{ .name = "ss", .help = "Sort by size, smallest first", .run = sortBy(.by_size_asc) },
     .{ .name = "sS", .help = "Sort by size, largest first", .run = sortBy(.by_size_desc) },
+    .{ .name = "se", .help = "Sort by extension, A to Z", .run = sortBy(.by_ext_asc) },
+    .{ .name = "sE", .help = "Sort by extension, Z to A", .run = sortBy(.by_ext_desc) },
     .{ .name = "cw", .help = "Batch rename visible files in $EDITOR", .run = bulkRename },
     .{ .name = "sh", .help = "Open $SHELL here, exit it to return", .run = interactiveShell },
     .{ .name = "a", .help = "Aliases: type to filter (1 match = go), Enter = go", .run = enterAliases },
