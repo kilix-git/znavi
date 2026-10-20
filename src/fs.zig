@@ -123,8 +123,9 @@ pub fn getDirContents(
         var final_name: []const u8 = undefined;
         var final_ext: []const u8 = "";
 
-        // and fill them by duping on the arena
-        if (entry.kind == .file) {
+        // and fill them by duping on the arena; everything except directories gets its extension
+        // split off, so a symlink to a file (or a broken one) sorts and hides like the file itself
+        if (!is_dir) {
             final_name = try arena_allocator.dupe(u8, std.fs.path.stem(entry.name));
             final_ext = try arena_allocator.dupe(u8, std.fs.path.extension(entry.name));
         } else {
@@ -171,4 +172,39 @@ test "looksLikeText" {
     try std.testing.expect(looksLikeText("ahoj\nsvet"));
     try std.testing.expect(looksLikeText("")); //
     try std.testing.expect(!looksLikeText("\x7fELF\x02\x01\x00\x00"));
+}
+
+test "getDirContents splits the extension off everything except directories" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "notes.txt", .data = "" });
+    try tmp.dir.symLink(io, "notes.txt", "link.md", .{});
+    try tmp.dir.symLink(io, "missing.txt", "broken.txt", .{});
+    try tmp.dir.createDir(io, "my.dir", .default_dir);
+    try tmp.dir.symLink(io, "my.dir", "dirlink.d", .{ .is_directory = true });
+
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = path_buf[0..try tmp.dir.realPath(io, &path_buf)];
+    var skipped: ?anyerror = null;
+    const contents = try getDirContents(io, arena.allocator(), path, &skipped, false);
+
+    const Expected = struct { full: []const u8, name: []const u8, ext: []const u8 };
+    for ([_]Expected{
+        .{ .full = "notes.txt", .name = "notes", .ext = ".txt" },
+        .{ .full = "link.md", .name = "link", .ext = ".md" },
+        .{ .full = "broken.txt", .name = "broken", .ext = ".txt" },
+        .{ .full = "my.dir", .name = "my.dir", .ext = "" },
+        .{ .full = "dirlink.d", .name = "dirlink.d", .ext = "" },
+    }) |expected| {
+        var buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
+        const entry = for (contents) |e| {
+            if (std.mem.eql(u8, e.fullName(&buf), expected.full)) break e;
+        } else return error.TestEntryNotFound;
+        try std.testing.expectEqualStrings(expected.name, entry.name);
+        try std.testing.expectEqualStrings(expected.ext, entry.extension);
+    }
 }
