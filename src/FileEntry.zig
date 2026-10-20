@@ -6,6 +6,9 @@ extension: []const u8,
 is_dir: bool = false,
 is_hidden: bool = false,
 is_symlink: bool = false,
+// The ".." entry that fs.getDirContents puts first (except at "/"): sorting keeps it first,
+// l/Enter on it acts like h and :cw leaves it out
+is_parent: bool = false,
 size: usize = 0,
 date: std.Io.Timestamp = .zero,
 // uid / gid; null initialize to null if we are unable to get the real values (will be shown as "?")

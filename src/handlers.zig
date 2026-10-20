@@ -84,6 +84,8 @@ fn handleNormalMode(key: Key, state: *ProgramState, view: *const View, gpa: std.
         .right => {
             if (view.visible.len > 0) {
                 const item = view.visible[state.global_index];
+                // Going into ".." is going up: same history and cursor as h
+                if (item.is_parent) return handleNormalMode(.left, state, view, gpa);
                 if (item.is_dir) {
                     state.search_buffer.clearRetainingCapacity();
                     try enterDir(state, gpa, item);
@@ -148,25 +150,25 @@ fn handleNormalMode(key: Key, state: *ProgramState, view: *const View, gpa: std.
             }
         },
         .quit => return .quit,
+        .escape => {
+            if (state.search_buffer.items.len > 0) {
+                state.rememberSelected(view);
+                state.search_buffer.clearRetainingCapacity();
+            }
+        },
+        .enter => {
+            if (view.visible.len > 0) {
+                // IF IT'S A DIRECTORY: artificially trigger the .right branch (right arrow)
+                // That way Enter takes over all the logic, history and memory management of the 'l' key
+                if (view.visible[state.global_index].is_dir) {
+                    return handleNormalMode(.right, state, view, gpa);
+                } else {
+                    // If it's a file, just open it (editor or xdg-open)
+                    return .{ .open_file = view.visible[state.global_index] };
+                }
+            }
+        },
         .char => |c| switch (c) {
-            27 => {
-                if (state.search_buffer.items.len > 0) {
-                    state.rememberSelected(view);
-                    state.search_buffer.clearRetainingCapacity();
-                }
-            },
-            '\r', '\n' => {
-                if (view.visible.len > 0) {
-                    // IF IT'S A DIRECTORY: artificially trigger the .right branch (right arrow)
-                    // That way Enter takes over all the logic, history and memory management of the 'l' key
-                    if (view.visible[state.global_index].is_dir) {
-                        return handleNormalMode(.right, state, view, gpa);
-                    } else {
-                        // If it's a file, just open it (editor or xdg-open)
-                        return .{ .open_file = view.visible[state.global_index] };
-                    }
-                }
-            },
             'r' => state.refresh(view),
             else => {},
         },
@@ -176,29 +178,29 @@ fn handleNormalMode(key: Key, state: *ProgramState, view: *const View, gpa: std.
 
 fn handleCommandMode(key: Key, state: *ProgramState, view: *const View, gpa: std.mem.Allocator) !Action {
     switch (key) {
-        .char => |c| switch (c) {
-            '\r', '\n' => {
-                const command = state.command_buffer.items;
-                // After Enter we return to normal mode (the :a command switches on to alias mode)
-                state.program_mode = .normal;
+        .enter => {
+            const command = state.command_buffer.items;
+            // After Enter we return to normal mode (the :a command switches on to alias mode)
+            state.program_mode = .normal;
 
-                for (commands) |cmd| {
-                    if (std.mem.eql(u8, command, cmd.name)) return cmd.run(state, view);
+            for (commands) |cmd| {
+                if (std.mem.eql(u8, command, cmd.name)) return cmd.run(state, view);
+            }
+            // :!ls – the shell command is run by main (an empty :! does nothing)
+            if (command.len > 1 and command[0] == '!') return .{ .run_shell = command[1..] };
+            // :<number> – jump to an index
+            if (std.fmt.parseInt(usize, command, 10) catch null) |target_index| {
+                if (target_index < view.visible.len) {
+                    state.global_index = target_index;
+                } else if (view.visible.len > 0) {
+                    state.global_index = view.visible.len - 1;
                 }
-                // :!ls – the shell command is run by main (an empty :! does nothing)
-                if (command.len > 1 and command[0] == '!') return .{ .run_shell = command[1..] };
-                // :<number> – jump to an index
-                if (std.fmt.parseInt(usize, command, 10) catch null) |target_index| {
-                    if (target_index < view.visible.len) {
-                        state.global_index = target_index;
-                    } else if (view.visible.len > 0) {
-                        state.global_index = view.visible.len - 1;
-                    }
-                }
-            },
-            27 => {
-                state.program_mode = .normal;
-            },
+            }
+        },
+        .escape => {
+            state.program_mode = .normal;
+        },
+        .char => |c| switch (c) {
             32...126 => {
                 try state.command_buffer.append(gpa, c);
             },
@@ -217,15 +219,15 @@ fn handleCommandMode(key: Key, state: *ProgramState, view: *const View, gpa: std
 
 fn handleSearchMode(key: Key, state: *ProgramState, gpa: std.mem.Allocator) !Action {
     switch (key) {
+        .enter => {
+            state.program_mode = .normal;
+        },
+        .escape => {
+            state.search_buffer.clearRetainingCapacity();
+            state.resetIndices();
+            state.program_mode = .normal;
+        },
         .char => |c| switch (c) {
-            '\r', '\n' => {
-                state.program_mode = .normal;
-            },
-            27 => {
-                state.search_buffer.clearRetainingCapacity();
-                state.resetIndices();
-                state.program_mode = .normal;
-            },
             32...126 => {
                 try state.search_buffer.append(gpa, c);
                 state.resetIndices();
@@ -246,14 +248,14 @@ fn handleSearchMode(key: Key, state: *ProgramState, gpa: std.mem.Allocator) !Act
 
 fn handleAliasMode(key: Key, state: *ProgramState, view: *const View, gpa: std.mem.Allocator) !Action {
     switch (key) {
+        .enter => {
+            if (view.alias_matches.len == 0) return .none;
+            return .{ .jump_to_alias = view.alias_matches[state.alias_index] };
+        },
+        .escape => {
+            state.program_mode = .normal;
+        },
         .char => |c| switch (c) {
-            '\r', '\n' => {
-                if (view.alias_matches.len == 0) return .none;
-                return .{ .jump_to_alias = view.alias_matches[state.alias_index] };
-            },
-            27 => {
-                state.program_mode = .normal;
-            },
             32...126 => {
                 try state.alias_buffer.append(gpa, c);
                 state.alias_index = 0;
@@ -286,7 +288,11 @@ fn handleAliasMode(key: Key, state: *ProgramState, view: *const View, gpa: std.m
 fn handleHelpMode(key: Key, state: *ProgramState, view: *const View) Action {
     switch (key) {
         .quit => return .quit,
-        .char => |c| if (c == 'q' or c == 27) {
+        .escape => {
+            state.program_mode = .normal;
+            return .none;
+        },
+        .char => |c| if (c == 'q') {
             state.program_mode = .normal;
             return .none;
         },
@@ -363,12 +369,12 @@ test "Enter: a file returns open_file, a directory changes the directory" {
     const view: View = .{ .visible = &items };
 
     state.global_index = 1;
-    const action = try feedKeys(&state, &view, &.{.{ .char = '\r' }});
+    const action = try feedKeys(&state, &view, &.{.enter});
     try std.testing.expectEqualStrings("notes.txt", action.open_file.name);
     try std.testing.expectEqualStrings("/tmp", state.current_dir);
 
     state.global_index = 0;
-    try std.testing.expectEqual(Action.none, try feedKeys(&state, &view, &.{.{ .char = '\r' }}));
+    try std.testing.expectEqual(Action.none, try feedKeys(&state, &view, &.{.enter}));
     try std.testing.expectEqualStrings("/tmp/sub", state.current_dir);
     try std.testing.expect(state.dir_changed);
 }
@@ -392,6 +398,22 @@ test "h and then l puts the cursor back on the directory we came from" {
     try std.testing.expectEqual(@as(usize, 0), state.history_forward.items.len);
 }
 
+test "Enter on .. goes up like h" {
+    var state = try testState("/tmp/sub");
+    defer state.deinit(std.testing.allocator);
+
+    var up = testEntry("..", true, 0);
+    up.is_parent = true;
+    const items = [_]FileEntry{ up, testEntry("x", true, 0) };
+    const view: View = .{ .visible = &items };
+
+    _ = try feedKeys(&state, &view, &.{.enter});
+    try std.testing.expectEqualStrings("/tmp", state.current_dir);
+    // Remembered like after h, so the cursor lands on "sub" and l goes back down
+    try std.testing.expectEqual(@as(usize, 1), state.history_forward.items.len);
+    try std.testing.expectEqualStrings("sub", state.history_forward.items[0]);
+}
+
 test "commands :sS, :q and :<number>" {
     var state = try testState("/tmp");
     defer state.deinit(std.testing.allocator);
@@ -399,18 +421,18 @@ test "commands :sS, :q and :<number>" {
     for (&items) |*item| item.* = testEntry("f", false, 0);
     const view: View = .{ .visible = &items };
 
-    _ = try feedKeys(&state, &view, &.{ .command, .{ .char = 's' }, .{ .char = 'S' }, .{ .char = '\r' } });
+    _ = try feedKeys(&state, &view, &.{ .command, .{ .char = 's' }, .{ .char = 'S' }, .enter });
     try std.testing.expectEqual(Sorting.by_size_desc, state.current_sorting);
     try std.testing.expectEqual(Mode.normal, state.program_mode);
 
     // A number past the end of the list: the last item
-    _ = try feedKeys(&state, &view, &.{ .command, .{ .char = '4' }, .{ .char = '2' }, .{ .char = '\r' } });
+    _ = try feedKeys(&state, &view, &.{ .command, .{ .char = '4' }, .{ .char = '2' }, .enter });
     try std.testing.expectEqual(@as(usize, 9), state.global_index);
 
     // An unknown command does nothing
-    try std.testing.expectEqual(Action.none, try feedKeys(&state, &view, &.{ .command, .{ .char = 'x' }, .{ .char = '\r' } }));
+    try std.testing.expectEqual(Action.none, try feedKeys(&state, &view, &.{ .command, .{ .char = 'x' }, .enter }));
 
-    try std.testing.expectEqual(Action.quit, try feedKeys(&state, &view, &.{ .command, .{ .char = 'q' }, .{ .char = '\r' } }));
+    try std.testing.expectEqual(Action.quit, try feedKeys(&state, &view, &.{ .command, .{ .char = 'q' }, .enter }));
 }
 
 test "alias mode jumps by itself when only one alias is left" {
@@ -446,7 +468,7 @@ test "help: paging, q closes, Ctrl+C quits" {
     try std.testing.expectEqual(Mode.normal, state.program_mode);
 
     // :? opens help again from the first page, q closes it right away
-    _ = try feedKeys(&state, &view, &.{ .command, .{ .char = '?' }, .{ .char = '\r' } });
+    _ = try feedKeys(&state, &view, &.{ .command, .{ .char = '?' }, .enter });
     try std.testing.expectEqual(Mode.help, state.program_mode);
     try std.testing.expectEqual(@as(usize, 0), state.help_page);
     _ = try feedKeys(&state, &view, &.{.{ .char = 'q' }});
@@ -463,11 +485,11 @@ test ":! returns the shell command, an empty :! does nothing" {
     defer state.deinit(std.testing.allocator);
     const view: View = .{};
 
-    const action = try feedKeys(&state, &view, &.{ .command, .{ .char = '!' }, .{ .char = 'l' }, .{ .char = 's' }, .{ .char = '\r' } });
+    const action = try feedKeys(&state, &view, &.{ .command, .{ .char = '!' }, .{ .char = 'l' }, .{ .char = 's' }, .enter });
     try std.testing.expectEqualStrings("ls", action.run_shell);
     try std.testing.expectEqual(Mode.normal, state.program_mode);
 
-    try std.testing.expectEqual(Action.none, try feedKeys(&state, &view, &.{ .command, .{ .char = '!' }, .{ .char = '\r' } }));
+    try std.testing.expectEqual(Action.none, try feedKeys(&state, &view, &.{ .command, .{ .char = '!' }, .enter }));
 }
 
 test ":sh returns an interactive shell" {
@@ -475,7 +497,7 @@ test ":sh returns an interactive shell" {
     defer state.deinit(std.testing.allocator);
     const view: View = .{};
 
-    try std.testing.expectEqual(Action.interactive_shell, try feedKeys(&state, &view, &.{ .command, .{ .char = 's' }, .{ .char = 'h' }, .{ .char = '\r' } }));
+    try std.testing.expectEqual(Action.interactive_shell, try feedKeys(&state, &view, &.{ .command, .{ .char = 's' }, .{ .char = 'h' }, .enter }));
     try std.testing.expectEqual(Mode.normal, state.program_mode);
 }
 

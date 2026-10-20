@@ -1,6 +1,8 @@
 // Key reading: bytes from stdin (including arrow escape sequences) -> Key
 const std = @import("std");
 
+const esc = 0x1B;
+
 pub const Key = union(enum) {
     help,
     up,
@@ -12,6 +14,8 @@ pub const Key = union(enum) {
     alias,
     quit,
     backspace,
+    enter,
+    escape,
     ctrl_d,
     ctrl_u,
     ctrl_z,
@@ -24,7 +28,7 @@ pub const Key = union(enum) {
 pub fn readKey(stdin: anytype, typing: bool) !Key {
     const byte = try stdin.takeByte();
 
-    if (byte == 27) { // Start of an escape sequence
+    if (byte == esc) { // Start of an escape sequence
         // Arrows arrive all at once (ESC [ A), a lone Esc arrives by itself.
         // Peek into the buffer without blocking.
         const pending = stdin.buffered();
@@ -39,17 +43,19 @@ pub fn readKey(stdin: anytype, typing: bool) !Key {
                 else => blk: {
                     // Unknown sequence (e.g. Delete = ESC [ 3 ~), discard the rest
                     stdin.toss(stdin.buffered().len);
-                    break :blk Key{ .char = 27 };
+                    break :blk .escape;
                 },
             };
         }
-        return Key{ .char = 27 }; // Lone Esc
+        return .escape; // Lone Esc
     }
 
     // Ctrl+C quits the program in every mode (ISIG is off, so it arrives as byte 3)
     if (byte == 3) return .quit;
     // Ctrl+Z (byte 26) – suspending is handled by main, also in every mode
     if (byte == 26) return .ctrl_z;
+    // Enter (\n, since ICRNL is left on; \r e.g. from Ctrl+M) – also in every mode
+    if (byte == '\n' or byte == '\r') return .enter;
 
     // While typing a command we want keys like 'q', 'j', 'k' sent as plain characters!
     if (typing) {
@@ -72,11 +78,13 @@ pub fn readKey(stdin: anytype, typing: bool) !Key {
         'g' => { // Start of the gg sequence
             // Try to read the second character right away
             const next = stdin.takeByte() catch return Key{ .char = byte };
-            if (next == 'g') {
-                return .go_top;
-            }
-            // If it wasn't 'g', return the character (or implement a switch for other g-commands)
-            return Key{ .char = next };
+            // If it wasn't 'g', return the next key (or extend this switch for other g-commands)
+            return switch (next) {
+                'g' => .go_top,
+                esc => .escape,
+                '\n', '\r' => .enter,
+                else => Key{ .char = next },
+            };
         },
         ':' => .command,
         '/' => .search,

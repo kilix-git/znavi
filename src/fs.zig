@@ -88,6 +88,7 @@ pub fn getDirContents(
             .name = "..",
             .extension = "",
             .is_dir = true,
+            .is_parent = true,
             .is_hidden = false,
             .is_symlink = false,
             .size = if (parent_stat) |ps| ps.size else 0,

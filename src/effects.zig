@@ -136,7 +136,7 @@ pub fn bulkRename(
     var sources: std.ArrayList([]const u8) = .empty;
     var list: std.ArrayList(u8) = .empty;
     for (visible) |item| {
-        if (std.mem.eql(u8, item.name, "..")) continue;
+        if (item.is_parent) continue;
         const name = try std.fmt.allocPrint(allocator, "{s}{s}", .{ item.name, item.extension });
         if (std.mem.indexOfAny(u8, name, "\r\n") != null) continue;
         try sources.append(allocator, name);

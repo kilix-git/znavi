@@ -120,9 +120,9 @@ pub const ProgramState = struct {
     }
 
     pub fn sortContents(self: *ProgramState) void {
-        // ".." is added by getDirContents as the first item – keep it at index 0 in every sort
+        // The ".." entry stays at index 0 in every sort
         var items = self.current_dir_contents;
-        if (items.len > 0 and std.mem.eql(u8, items[0].name, "..")) items = items[1..];
+        if (items.len > 0 and items[0].is_parent) items = items[1..];
 
         switch (self.current_sorting) {
             .by_name => std.mem.sort(FileEntry, items, {}, FileEntry.lessThanByName),
