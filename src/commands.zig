@@ -71,17 +71,16 @@ fn toggleHidden(state: *ProgramState, view: *const View) Action {
     return .none;
 }
 
-// if we changed :vo or :vg, we need to re-read the contents
+// the owner/group ids are always read with the directory, only the names are looked up
+// when the column is turned on (main does that, the names are cached so it's done once per id)
 fn toggleOwner(state: *ProgramState, _: *const View) Action {
     state.viewing.owner = !state.viewing.owner;
-    if (state.viewing.owner and !state.viewing.group) state.dir_changed = true;
-    return .none;
+    return if (state.viewing.owner) .lookup_names else .none;
 }
 
 fn toggleGroup(state: *ProgramState, _: *const View) Action {
     state.viewing.group = !state.viewing.group;
-    if (state.viewing.group and !state.viewing.owner) state.dir_changed = true;
-    return .none;
+    return if (state.viewing.group) .lookup_names else .none;
 }
 
 fn toggleView(comptime field: []const u8) *const fn (*ProgramState, *const View) Action {
@@ -102,4 +101,15 @@ fn sortBy(comptime sorting: Sorting) *const fn (*ProgramState, *const View) Acti
             return .none;
         }
     }.run;
+}
+
+test ":vo and :vg ask for name lookup when turned on, never re-read the directory" {
+    var state = ProgramState{ .current_dir = "/x", .command_buffer = .empty, .search_buffer = .empty, .history_forward = .empty };
+    state.dir_changed = false;
+    const view: View = .{};
+    try std.testing.expectEqual(Action.lookup_names, toggleOwner(&state, &view));
+    try std.testing.expectEqual(Action.none, toggleOwner(&state, &view));
+    try std.testing.expectEqual(Action.lookup_names, toggleGroup(&state, &view));
+    try std.testing.expectEqual(Action.none, toggleGroup(&state, &view));
+    try std.testing.expect(!state.dir_changed);
 }

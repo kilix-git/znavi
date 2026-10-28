@@ -130,6 +130,8 @@ pub fn main(init: std.process.Init) !void {
                 try posix.raise(.TSTP);
                 try terminal.enterRaw();
             },
+            // On purpose no reload after the editor: files made from inside it (e.g. :!xelatex % in vim
+            // makes a .pdf, .log, .aux) and the new size/date show up only after r. :!, :sh and :cw reload
             .open_file => |item| effects.openFile(ui, frame_allocator, state.current_dir, item) catch |err| {
                 active_error = err;
             },
@@ -160,6 +162,7 @@ pub fn main(init: std.process.Init) !void {
                 state.rememberSelected(&view);
                 state.dir_changed = true;
             },
+            .lookup_names => try lookupNames(&state, init.arena.allocator()),
             .bulk_rename => {
                 const tmp_dir = init.environ_map.get("TMPDIR") orelse "/tmp";
                 effects.bulkRename(ui, frame_allocator, tmp_dir, state.current_dir, view.visible) catch |err| {
@@ -206,18 +209,24 @@ fn reloadDir(
 
     // null if everything is fine, otherwise the error of an entry we had to skip
     var skipped_error: ?anyerror = null;
-    const contents = fs.getDirContents(io, dir_arena.allocator(), state.current_dir, &skipped_error, state.viewing.owner or state.viewing.group) catch |err| {
+    const contents = fs.getDirContents(io, dir_arena.allocator(), state.current_dir, &skipped_error) catch |err| {
         const shown: ?anyerror = err;
         return shown;
     };
-    // uid/gid -> names (from the cache, a new id is looked up in libc only once)
-    for (contents) |*entry| {
-        entry.owner_name = try fs.lookupName(.user, &state.user_names, names_allocator, entry.owner);
-        entry.group_name = try fs.lookupName(.group, &state.group_names, names_allocator, entry.group);
-    }
     state.current_dir_contents = contents;
+    try lookupNames(state, names_allocator);
     state.sortContents();
     return skipped_error;
+}
+
+// uid/gid -> names, only for the columns that are shown (a hidden column keeps "?").
+// From the cache, a new id is looked up in libc only once; called after reading a directory and
+// when :vo or :vg gets turned on
+fn lookupNames(state: *ProgramState, names_allocator: std.mem.Allocator) !void {
+    for (state.current_dir_contents) |*entry| {
+        if (state.viewing.owner) entry.owner_name = try fs.lookupName(.user, &state.user_names, names_allocator, entry.owner);
+        if (state.viewing.group) entry.group_name = try fs.lookupName(.group, &state.group_names, names_allocator, entry.group);
+    }
 }
 
 // ===================== Tests (zig build test) =====================

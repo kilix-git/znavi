@@ -18,7 +18,7 @@ pub fn getStartingDir(io: std.Io, arg: ?[]const u8, out_buffer: []u8) ![]u8 {
     return real_path;
 }
 
-// lookupName, getOwnerGroup written by claude, tried to comprehend and comment by me
+// lookupName, libcStat (was getOwnerGroup) written by claude, tried to comprehend and comment by me
 pub fn lookupName(
     comptime kind: enum { user, group },
     map: *std.AutoHashMapUnmanaged(u32, []const u8),
@@ -46,8 +46,31 @@ pub fn lookupName(
     return name;
 }
 
-// Zig's std.Io.File.Stat does not have owner and group, so let's use libc's function fstatat().
-fn getOwnerGroup(dir: std.Io.Dir, name: []const u8) ?struct { uid: u32, gid: u32 } {
+// A stat of one entry with its owner and group (null if we couldn't get them)
+const EntryStat = struct {
+    stat: std.Io.File.Stat,
+    uid: ?u32 = null,
+    gid: ?u32 = null,
+};
+
+// One stat() per entry. Zig's std.Io.File.Stat does not have owner and group, so we call libc's
+// fstatat() instead of Zig's statFile: it returns everything at once and statFromPosix turns it into
+// the same Stat that statFile gives (on FreeBSD Zig does exactly this inside statFile).
+// The owner and group come for free, so we always keep the ids; turning them into names
+// (which reads the user/group database) happens only when :vo or :vg is on, see main.lookupNames
+fn statEntry(io: std.Io, dir: std.Io.Dir, name: []const u8) !EntryStat {
+    if (libcStat(dir, name)) |st| {
+        return .{ .stat = std.Io.Threaded.statFromPosix(&st), .uid = st.uid, .gid = st.gid };
+    }
+    // libc failed: we try statFile only to get a proper error to show
+    // (it costs more calls, but only for entries we can't stat at all)
+    // broken symlink: stat of the target fails, so let's stat the symlink itself
+    const stat = dir.statFile(io, name, .{}) catch
+        try dir.statFile(io, name, .{ .follow_symlinks = false });
+    return .{ .stat = stat };
+}
+
+fn libcStat(dir: std.Io.Dir, name: []const u8) ?std.c.Stat {
     // prepare a new buffer, +1 size for the terminating '\0' (we are creating a C-style string)
     var name_buf: [std.fs.max_path_bytes + 1]u8 = undefined;
     // name_z will contain a C-style string which we can then feed to fstatat
@@ -57,17 +80,15 @@ fn getOwnerGroup(dir: std.Io.Dir, name: []const u8) ?struct { uid: u32, gid: u32
     // the function returns null, if both calls fail
     if (std.c.fstatat(dir.handle, name_z, &st, 0) != 0 and
         std.c.fstatat(dir.handle, name_z, &st, std.c.AT.SYMLINK_NOFOLLOW) != 0) return null;
-    return .{ .uid = st.uid, .gid = st.gid };
+    return st;
 }
 
 // skipped_error: arg is meant to contain an error if it occurs while reading an entry
-// with_owner: argument says if we should check the entries' owner/group, if set to false, we do not do those checks (:vo or :vg turned ON)
 pub fn getDirContents(
     io: std.Io,
     arena_allocator: std.mem.Allocator,
     directory_name: []const u8,
     skipped_error: *?anyerror,
-    with_owner: bool,
 ) ![]FileEntry {
     var list: std.ArrayList(FileEntry) = .empty;
     errdefer list.deinit(arena_allocator);
@@ -82,8 +103,8 @@ pub fn getDirContents(
     // we will fill those variables with zeroes instead of 'undefined'
     // only do this if we are not in the '/' root directory, as it has no parent
     if (!std.mem.eql(u8, directory_name, "/")) {
-        const parent_stat = dir.statFile(io, "..", .{}) catch null;
-        const parent_owner = if (with_owner) getOwnerGroup(dir, "..") else null;
+        const parent = statEntry(io, dir, "..") catch null;
+        const parent_stat = if (parent) |p| p.stat else null;
         try list.append(arena_allocator, .{
             .name = "..",
             .extension = "",
@@ -94,8 +115,8 @@ pub fn getDirContents(
             .kind = .directory,
             .size = if (parent_stat) |ps| ps.size else 0,
             .date = if (parent_stat) |ps| ps.mtime else .zero,
-            .owner = if (parent_owner) |og| og.uid else null,
-            .group = if (parent_owner) |og| og.gid else null,
+            .owner = if (parent) |p| p.uid else null,
+            .group = if (parent) |p| p.gid else null,
             .permissions = if (parent_stat) |ps| ps.permissions else .fromMode(0),
         });
     }
@@ -106,16 +127,12 @@ pub fn getDirContents(
         const is_hidden = entry.name.len > 0 and entry.name[0] == '.' and
             !std.mem.eql(u8, entry.name, ".") and !std.mem.eql(u8, entry.name, "..");
 
-        // broken symlink: stat of the target fails, so let's stat the symlink itself
-        // if that fails as well, we skip the entry and write the error and continue onto the next entry
-        const stat = dir.statFile(io, entry.name, .{}) catch
-            dir.statFile(io, entry.name, .{ .follow_symlinks = false }) catch |err| {
+        // if even the symlink itself can't be stat'ed, we skip the entry and write the error and continue onto the next entry
+        const entry_stat = statEntry(io, dir, entry.name) catch |err| {
             skipped_error.* = err;
             continue;
         };
-
-        // remember the function argument? Let's not do unnecessary operations
-        const owner_group = if (with_owner) getOwnerGroup(dir, entry.name) else null;
+        const stat = entry_stat.stat;
 
         const is_symlink = (entry.kind == .sym_link);
         const is_dir = if (is_symlink) (stat.kind == .directory) else (entry.kind == .directory);
@@ -148,8 +165,8 @@ pub fn getDirContents(
                 .kind = entry.kind,
                 .size = stat.size,
                 .date = stat.mtime,
-                .owner = if (owner_group) |og| og.uid else null,
-                .group = if (owner_group) |og| og.gid else null,
+                .owner = entry_stat.uid,
+                .group = entry_stat.gid,
                 .permissions = stat.permissions,
             });
         }
@@ -195,7 +212,7 @@ test "getDirContents splits the extension off everything except directories" {
     var path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const path = path_buf[0..try tmp.dir.realPath(io, &path_buf)];
     var skipped: ?anyerror = null;
-    const contents = try getDirContents(io, arena.allocator(), path, &skipped, false);
+    const contents = try getDirContents(io, arena.allocator(), path, &skipped);
 
     const Expected = struct { full: []const u8, name: []const u8, ext: []const u8 };
     for ([_]Expected{
@@ -211,5 +228,38 @@ test "getDirContents splits the extension off everything except directories" {
         } else return error.TestEntryNotFound;
         try std.testing.expectEqualStrings(expected.name, entry.name);
         try std.testing.expectEqualStrings(expected.ext, entry.extension);
+    }
+}
+
+test "getDirContents gives the same data as Zig's statFile, plus owner and group" {
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    try tmp.dir.writeFile(io, .{ .sub_path = "notes.txt", .data = "hello" });
+    try tmp.dir.createDir(io, "sub", .default_dir);
+    try tmp.dir.symLink(io, "notes.txt", "link.md", .{});
+    try tmp.dir.symLink(io, "missing.txt", "broken.txt", .{});
+
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path = path_buf[0..try tmp.dir.realPath(io, &path_buf)];
+    var skipped: ?anyerror = null;
+    const contents = try getDirContents(io, arena.allocator(), path, &skipped);
+    try std.testing.expectEqual(@as(?anyerror, null), skipped);
+
+    for (contents) |entry| {
+        if (entry.is_parent) continue;
+        var buf: [std.Io.Dir.max_name_bytes]u8 = undefined;
+        const name = entry.fullName(&buf);
+        // what statFile would have given (the broken symlink: the symlink itself)
+        const expected = tmp.dir.statFile(io, name, .{}) catch
+            try tmp.dir.statFile(io, name, .{ .follow_symlinks = false });
+        try std.testing.expectEqual(expected.size, entry.size);
+        try std.testing.expectEqual(expected.mtime, entry.date);
+        try std.testing.expectEqual(expected.permissions, entry.permissions);
+        try std.testing.expectEqual(@as(?u32, std.c.getuid()), entry.owner);
+        try std.testing.expect(entry.group != null);
     }
 }

@@ -182,6 +182,8 @@ pub const Action = union(enum) {
     bulk_rename,
     // :sh – interactive $SHELL in the current directory, back to znavi when it exits
     interactive_shell,
+    // :vo / :vg turned on – turn the owner/group ids into names (reads the user/group database)
+    lookup_names,
 };
 
 // Saves a copy of the path to the history; if append fails, the copy is freed so it doesn't leak

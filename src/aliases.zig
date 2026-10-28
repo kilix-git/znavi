@@ -21,6 +21,9 @@ pub fn loadAliases(io: std.Io, arena: std.mem.Allocator, home: []const u8) ![]co
     };
 
     const aliases = try parseAliases(arena, contents, home);
+    // Warning: realpath touches every alias's directory at startup. If an alias points to a network
+    // share (NFS, SMB) or an automounted path, znavi waits here for it to answer or get mounted,
+    // even if the alias never gets used; a share that is down can make the start very slow
     for (aliases) |*alias| {
         // If the directory does not (yet) exist, realpath fails – the text-only path from parseAliases remains
         var real_buf: [std.fs.max_path_bytes]u8 = undefined;
