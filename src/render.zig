@@ -5,6 +5,7 @@ const Terminal = @import("Terminal.zig");
 const ProgramState = @import("state.zig").ProgramState;
 const View = @import("state.zig").View;
 const commands = @import("commands.zig").commands;
+const colors = @import("colors.zig");
 
 pub fn drawScreen(
     stdout: *std.Io.Writer,
@@ -13,6 +14,7 @@ pub fn drawScreen(
     view: *const View,
     active_error: ?anyerror,
     cols: u16,
+    now: std.Io.Timestamp,
 ) !void {
     const mode_string = switch (state.program_mode) {
         .normal => "[N]",
@@ -66,10 +68,10 @@ pub fn drawScreen(
         const file_is_selected = (idx == state.global_index);
 
         if (file_is_selected) {
-            try stream_writer.writeAll("\x1B[48;5;236m");
+            try stream_writer.writeAll(colors.selected_bg);
         }
 
-        const pointer = if (file_is_selected) ">" else " ";
+        const pointer = if (file_is_selected) "»" else " ";
         const italic_start = if (file.is_symlink) "\x1b[3m" else "";
         const italic_end = if (file.is_symlink) "\x1b[23m" else "";
         const slash = if (file.is_dir) "/" else "";
@@ -88,7 +90,16 @@ pub fn drawScreen(
             shown_name = truncateToWidth(full_name, name_col - 1);
             ellipsis = "…";
         }
-        try stream_writer.print("{s}{s}{s}{s}", .{ italic_start, shown_name, ellipsis, italic_end });
+        // The name in its ls -G color; the slash of a directory stays uncolored like in ls -F
+        // (a cut name has "…" instead of the slash, that one is colored with the name)
+        const has_slash = slash.len > 0 and ellipsis.len == 0;
+        const colored_name = if (has_slash) shown_name[0 .. shown_name.len - 1] else shown_name;
+        const color = state.palette.colorFor(file);
+        try stream_writer.writeAll(italic_start);
+        if (color) |c| try colors.writeStart(&stream_writer, c);
+        try stream_writer.print("{s}{s}", .{ colored_name, ellipsis });
+        if (color) |c| try colors.writeEnd(&stream_writer, c, file_is_selected);
+        try stream_writer.print("{s}{s}", .{ if (has_slash) slash else "", italic_end });
 
         // Effective padding
         const current_len = displayWidth(shown_name) + @as(usize, if (ellipsis.len > 0) 1 else 0);
@@ -129,8 +140,9 @@ pub fn drawScreen(
         if (state.viewing.date) {
             var date_buf: [20]u8 = undefined;
             const formatted_date = file.getFormattedDateTime(&date_buf);
-            try stream_writer.writeAll("   ");
-            try stream_writer.writeAll(formatted_date);
+            // Colored by age like in lsd: the last hour, the last day, older
+            const age_color = colors.ageColor(colors.ageOf(file.date, now));
+            try stream_writer.print("   {s}{s}\x1B[39m", .{ age_color, formatted_date });
         }
 
         if (state.viewing.size) {
@@ -192,8 +204,8 @@ pub fn drawAliasScreen(
 
     for (matches[start..end], start..) |alias, i| {
         const selected = (i == state.alias_index);
-        if (selected) try stream_writer.writeAll("\x1B[48;5;236m");
-        try stream_writer.writeAll(if (selected) ">" else " ");
+        if (selected) try stream_writer.writeAll(colors.selected_bg);
+        try stream_writer.writeAll(if (selected) "»" else " ");
         try writePadded(&stream_writer, alias.name, name_width);
         try stream_writer.writeAll("  ");
 
@@ -470,4 +482,23 @@ test "shownName and the name column follow :ve" {
     const files = [_]FileEntry{ file, .{ .name = "dir", .extension = "", .is_dir = true, .permissions = .fromMode(0o755) } };
     try std.testing.expectEqual(@as(usize, 14), getLongestNameLength(&files, true));
     try std.testing.expectEqual(@as(usize, 5), getLongestNameLength(&files, false));
+}
+
+test "file names get ls -G colors, the slash of a directory stays uncolored" {
+    var state = ProgramState{ .current_dir = "/x", .command_buffer = .empty, .search_buffer = .empty, .history_forward = .empty };
+    state.viewing = .{ .size = false, .date = false };
+    const files = [_]FileEntry{
+        .{ .name = "src", .extension = "", .is_dir = true, .kind = .directory, .permissions = .fromMode(0o755) },
+        .{ .name = "run", .extension = ".sh", .permissions = .fromMode(0o755) },
+        .{ .name = "notes", .extension = ".txt", .permissions = .fromMode(0o644) },
+    };
+    const view: View = .{ .visible = &files, .window = &files };
+    var buf: [4096]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    try drawScreen(&w, "/x", &state, &view, null, 80, .zero);
+    const out = w.buffered();
+    // the selected directory: blue name, slash after the color ends, the grey background stays
+    try std.testing.expect(std.mem.indexOf(u8, out, colors.selected_bg ++ "» 0 \x1B[34msrc\x1B[22;39m/") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, " 1 \x1B[31mrun.sh\x1B[22;39m") != null);
+    try std.testing.expect(std.mem.indexOf(u8, out, " 2 notes.txt\n") != null);
 }

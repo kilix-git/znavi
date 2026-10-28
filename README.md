@@ -73,6 +73,13 @@ Press `?` in normal mode or `:?` in command mode inside znavi for the full list 
 | `:sh`       | Open an interactive `$SHELL` in the current directory; `exit` returns to znavi |
 | `:?`        | Help                                           |
 
+## Colors
+
+File names are colored like FreeBSD's `ls -G`: znavi reads `LSCOLORS` (see `man ls`) and uses
+ls's default `exfxcxdxbxegedabagacad` when it isn't set. The slash after a directory stays
+uncolored and symlinks are also shown in italics. With the date column on (`:vd`), dates are
+colored by age like in lsd: changed in the last hour, in the last day, or older.
+
 ## Opening files
 
 Text files (no NUL byte in the first 8 KB) open in `$VISUAL`, then `$EDITOR`,

@@ -6,6 +6,9 @@ extension: []const u8,
 is_dir: bool = false,
 is_hidden: bool = false,
 is_symlink: bool = false,
+// What the directory entry itself is (a symlink stays .sym_link); colors.typeOf uses it for
+// sockets, pipes and devices, which getDirContents doesn't show yet (for future use)
+kind: std.Io.File.Kind = .file,
 // The ".." entry that fs.getDirContents puts first (except at "/"): sorting keeps it first,
 // l/Enter on it acts like h and :cw leaves it out
 is_parent: bool = false,

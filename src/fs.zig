@@ -91,6 +91,7 @@ pub fn getDirContents(
             .is_parent = true,
             .is_hidden = false,
             .is_symlink = false,
+            .kind = .directory,
             .size = if (parent_stat) |ps| ps.size else 0,
             .date = if (parent_stat) |ps| ps.mtime else .zero,
             .owner = if (parent_owner) |og| og.uid else null,
@@ -134,6 +135,9 @@ pub fn getDirContents(
 
         // finally, we have everything to add to the []FileEntries list
         // we only add files, dirs and symlinks
+        // for future use: to show sockets, FIFOs and devices too, add .unix_domain_socket, .named_pipe,
+        // .block_device and .character_device here; FileEntry.kind already carries them, colors.zig
+        // colors them like ls does and openFile refuses anything that is not a regular file
         if (entry.kind == .directory or entry.kind == .file or is_symlink) {
             try list.append(arena_allocator, .{
                 .name = final_name,
@@ -141,6 +145,7 @@ pub fn getDirContents(
                 .is_dir = is_dir,
                 .is_hidden = is_hidden,
                 .is_symlink = is_symlink,
+                .kind = entry.kind,
                 .size = stat.size,
                 .date = stat.mtime,
                 .owner = if (owner_group) |og| og.uid else null,

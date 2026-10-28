@@ -3,6 +3,7 @@ const std = @import("std");
 const FileEntry = @import("FileEntry.zig");
 const Terminal = @import("Terminal.zig");
 const Alias = @import("aliases.zig").Alias;
+const Palette = @import("colors.zig").Palette;
 
 pub const TERMINAL_PADDING: u4 = 4;
 
@@ -23,7 +24,7 @@ pub const Viewing = struct {
     hidden: bool = false,
     permissions: bool = false,
     size: bool = true,
-    date: bool = false,
+    date: bool = true,
     owner: bool = false,
     group: bool = false,
     aliases: bool = false,
@@ -69,6 +70,8 @@ pub const ProgramState = struct {
     pending_cursor: PendingCursor = .none,
     // cd aliases from ~/.aliases (loaded once at startup, live in the process arena)
     aliases: []const Alias = &.{},
+    // File name colors from $LSCOLORS (ls's default if it isn't set), read once at startup
+    palette: Palette = .default,
     // Cache uid -> name and gid -> name, each id is looked up via libc only once (lives in the process arena)
     user_names: std.AutoHashMapUnmanaged(u32, []const u8) = .empty,
     group_names: std.AutoHashMapUnmanaged(u32, []const u8) = .empty,

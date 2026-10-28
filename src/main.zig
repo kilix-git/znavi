@@ -73,6 +73,9 @@ pub fn main(init: std.process.Init) !void {
         state.aliases = aliases.loadAliases(io, init.arena.allocator(), home) catch &.{};
     }
 
+    // file name colors like ls -G
+    if (init.environ_map.get("LSCOLORS")) |lscolors| state.palette = .parse(lscolors);
+
     var active_error: ?anyerror = null;
 
     while (true) {
@@ -103,7 +106,9 @@ pub fn main(init: std.process.Init) !void {
             state.alias_index = @min(state.alias_index, view.alias_matches.len -| 1);
             try render.drawAliasScreen(stdout, &state, &view, active_error, terminal_size);
         } else {
-            try render.drawScreen(stdout, display_path, &state, &view, active_error, terminal_size.cols);
+            // the current time colors the date column by age
+            const now = std.Io.Clock.real.now(io);
+            try render.drawScreen(stdout, display_path, &state, &view, active_error, terminal_size.cols, now);
         }
         try stdout_writer.flush();
 
@@ -230,4 +235,5 @@ test {
     _ = @import("handlers.zig");
     _ = @import("rename.zig");
     _ = effects;
+    _ = @import("colors.zig");
 }
